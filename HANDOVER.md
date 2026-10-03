@@ -57,3 +57,33 @@
   remote `claude -p` process both terminated; no partial commits).
 - Task 02 file remains in `tasks/` as a scoped spec if revived later.
   Blocker stands: needs a device token (app+BLE pairing); SDK token → 401.
+
+## 2026-10-03 — task 03 done: AiPi Lite bring-up prep (no hardware yet)
+- **Runbook:** `docs/aipi-lite-bringup.md` (flash-day checklist, exact commands,
+  port discovery, troubleshooting, clean re-flash, 3 human gates). Serial-log and
+  pairing/verify sections are derived from SDK source and labelled EXPECTED, not observed.
+- **Toolchain validated:** ESP-IDF v6.0.1 installed at `~/esp/esp-idf-v6.0.1`
+  (Python env `~/.espressif/python_env/idf6.0_py3.14_env`, xtensa-esp-elf GCC 15.2.0,
+  esptool 5.4.0). `esp32/tools/muse/board.sh build aipi` in the scratch SDK
+  (`b1a3822`) succeeded with no board and no token: exit 0, 71 s wall, app
+  0x211000 bytes (48% of the 4 MB slot free). Artifacts stay in the SDK dir; none in this repo.
+  Simulator `ctest` still 1/1 green.
+- **Token flow (corrects the shorthand above):** the `mgst_` SDK token (48 chars,
+  from gadgets.muse.ai > Account > SDK tokens) is a BUILD-TIME Kconfig,
+  `CONFIG_GADGET_SDK_TOKEN`, compiled into the firmware. Device hands it to the
+  app inside the encrypted pairing session. The device token is separate: minted
+  by app + BLE pairing, stored in NVS. A token-less build compiles with a CMake
+  warning but will not pair, so flash day needs a token-set rebuild. Serial output
+  carries the first 12 characters of the token at three sites, not just boot: the
+  boot banner (`main/app.c`), pairing confirmation (`main/link_pairing.c`) and every
+  device-token refresh (`main/vm_api.c`). Treat any `mgst_` in a log as sensitive;
+  redact with `sed -E 's/mgst_[A-Za-z0-9_-]+/mgst_REDACTED/g'` before sharing.
+- **Every `idf.py` serial command needs `-B build-muse-aipi`** (monitor,
+  erase-flash). The SDK's `sdkconfig.defaults` targets esp32c5, so a bare `idf.py`
+  configures a stray `esp32/build/` + `esp32/sdkconfig` for the wrong chip; delete
+  both if that happens. Runbook fixed accordingly.
+- **Still hardware/human gated (Oct 8):** (1) Kevin fetches the SDK token,
+  (2) Kevin plugs in the board over a data-capable USB-C cable (not included in
+  the box), (3) Kevin pairs in Muse app > Settings > Devices > Developer mode.
+  Unverified until then: how to enter download mode if esptool cannot connect
+  (AIPI user buttons are GPIO42/GPIO1, not BOOT), actual serial output, voice round-trip.
