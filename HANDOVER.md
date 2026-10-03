@@ -50,3 +50,10 @@
   material destroyed after the test.
 - `tasks/02-sim-live-transport.md` written; token is runtime config only
   (env var or ~/.muse-charm/token), never in the repo.
+
+## 2026-10-03 — task 02 cancelled by Kev
+- The `/implement` run for task 02 was dispatched on a misread instruction
+  and killed per Kev's explicit "kill the transport build" (local session +
+  remote `claude -p` process both terminated; no partial commits).
+- Task 02 file remains in `tasks/` as a scoped spec if revived later.
+  Blocker stands: needs a device token (app+BLE pairing); SDK token → 401.
