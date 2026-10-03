@@ -40,3 +40,13 @@
      `usb`, `charging`, `asleep`, `passkey`, `paired`, `speaker`,
      `brightness`, `level`. Unset keys get defaults (e.g. battery shows 72%).
 - Next: human runs the interactive smoke test, then pick hardware.
+
+## 2026-10-03 — task 02 scoped: live transport hack
+- Code-reading verdict: typed-chat hack is feasible (clean `muse_hatch_*`
+  seam; portable in-repo Noise+mbedTLS; `muse_state_set_caption` for
+  replies). Voice is a separate, bigger task.
+- Auth wall, tested: SDK token (`mgst_...`) → `fetch_vms` → 401. A device
+  token (from app+BLE pairing of a real board) is required. Temp token
+  material destroyed after the test.
+- `tasks/02-sim-live-transport.md` written; token is runtime config only
+  (env var or ~/.muse-charm/token), never in the repo.
