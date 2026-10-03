@@ -28,6 +28,13 @@ a real device.
 
 ## Build
 
+> **macOS SDK mismatch:** if configure fails with "C compiler is not able
+> to compile a simple test program" / `ld: tapi error ... unknown
+> architecture arm64e.x1-macos`, your Command Line Tools SDK is newer than
+> the selected Xcode's linker. Run
+> `export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)` first (or update
+> Xcode), then delete the build dir and re-configure.
+
 ```sh
 git clone https://github.com/facebookincubator/muse-gadget-sdk
 cd muse-gadget-sdk
@@ -87,6 +94,10 @@ everything. A scenario file can pre-seed a session:
   --run-ms 250 \
   --screenshot thinking.ppm
 ```
+
+Upstream ships scenarios only for `error`, `idle`, `listening`, `pairing`,
+and `thinking`. For other states write your own file, e.g. `face=speaking`
+or `face=happy` (see `--help` for all keys).
 
 Scenario files are `key=value` per line (`face`, `caption`, `progress`,
 `battery`, `wifi`, `ble`, `link`, `advance`, …). Invalid values exit

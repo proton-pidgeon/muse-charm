@@ -10,23 +10,23 @@ upstream `esp32/simulator/README.md` in
 **Est. effort:** small — no ESP-IDF, no hardware.
 
 ## Deliverables
-- [ ] Prereqs present: Xcode CLT, `cmake` ≥ 3.24, `ninja`, Python ≥ 3.9
+- [x] Prereqs present: Xcode CLT, `cmake` ≥ 3.24, `ninja`, Python ≥ 3.9
   (`brew install cmake ninja python` if missing)
-- [ ] `muse-gadget-sdk` cloned (shallow is fine) into a scratch dir OUTSIDE
+- [x] `muse-gadget-sdk` cloned (shallow is fine) into a scratch dir OUTSIDE
   this repo — do not vendor the SDK here
-- [ ] `cmake -S esp32/simulator -B esp32/simulator/build -G Ninja -DCMAKE_BUILD_TYPE=Debug`
+- [x] `cmake -S esp32/simulator -B esp32/simulator/build -G Ninja -DCMAKE_BUILD_TYPE=Debug`
   then `cmake --build esp32/simulator/build --parallel` — clean build
-- [ ] `ctest --test-dir esp32/simulator/build --output-on-failure` — green
-- [ ] Headless renders (this SSH session has no display — use `--headless`):
+- [x] `ctest --test-dir esp32/simulator/build --output-on-failure` — green
+- [x] Headless renders (this SSH session has no display — use `--headless`):
   `--scenario` + `--run-ms 250` + `--screenshot` for `idle`, `listening`,
   `thinking`, `speaking`, and `happy`; save the PPMs somewhere durable and
   note their paths in HANDOVER.md
-- [ ] `muse_simulator --help` runs; record anything surprising vs the doc
+- [x] `muse_simulator --help` runs; record anything surprising vs the doc
 
 ## Definition of done
-- [ ] `ctest` passes with no failures
-- [ ] Five headless screenshots render (non-zero-size PPMs, one per state)
-- [ ] HANDOVER.md updated with: SDK commit built, screenshot paths, any
+- [x] `ctest` passes with no failures
+- [x] Five headless screenshots render (non-zero-size PPMs, one per state)
+- [x] HANDOVER.md updated with: SDK commit built, screenshot paths, any
   doc corrections
 
 ## Anti-deliverables (do NOT do in this task)
