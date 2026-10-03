@@ -86,8 +86,11 @@ and `main/app.c` (boot banner). Correcting the HANDOVER shorthand:
   warning `No SDK token: set CONFIG_GADGET_SDK_TOKEN ... Gadgets without one will
   stop pairing.` So the validated build below is token-less and **not suitable for
   pairing**; flash day needs a rebuild with the token.
-- The boot banner logs only the first 12 characters (`SDK token:  mgst_xxxxxxx`),
-  so serial logs leak a prefix; do not paste a log with that line into chat/issues.
+- The firmware logs the first 12 characters of the token at three sites: the boot
+  banner (`main/app.c`), pairing confirmation (`main/link_pairing.c`) and every
+  device-token refresh (`main/vm_api.c`). So serial logs leak a prefix anywhere,
+  not only at boot; redact every `mgst_` before sharing a log (command in the
+  Monitor section).
 - Don't commit it: the generated `build-muse-aipi/sdkconfig` is where it lives
   (gitignored in the SDK; this repo contains no builds). If it leaks, revoke on
   gadgets.muse.ai, mint a new one and rebuild.
@@ -204,9 +207,44 @@ If esptool cannot connect, see Troubleshooting (download mode).
 
 ```sh
 . ~/esp/esp-idf-v6.0.1/export.sh
-idf.py -p "$(python tools/muse/ports.py aipi)" monitor      # Ctrl-] quits; resets the board
-# non-interactive capture from boot: python tools/muse/monitor.py PORT 15
+cd ~/builds/muse-charm/scratch/muse-gadget-sdk/esp32
+idf.py -B build-muse-aipi -p "$(python tools/muse/ports.py aipi)" monitor      # Ctrl-] quits; resets the board
+# build-dir-independent alternative (resets the board, prints N seconds of log, exits):
+python tools/muse/monitor.py "$(python tools/muse/ports.py aipi)" 15
 ```
+
+**`-B build-muse-aipi` is mandatory on every `idf.py` command in this runbook.**
+The SDK's top-level `sdkconfig.defaults` sets `CONFIG_IDF_TARGET="esp32c5"`, and
+there is no `esp32/build/` or `esp32/sdkconfig`. A bare `idf.py -p PORT monitor`
+(or `erase-flash`) therefore configures a fresh default `esp32/build/` for the
+wrong chip (ESP32-C5, not the AIPI's ESP32-S3), writes a stray `esp32/sdkconfig`, and then
+fails or talks to the board with the wrong target. With `-B build-muse-aipi` idf.py
+reuses that build's cached config (verified 2026-10-03: it resolves `--target esp32s3`
+and `build-muse-aipi/muse-gadget.elf`, no stray files). If you forget it, delete
+`esp32/build/`, `esp32/sdkconfig` (and `esp32/sdkconfig.old` if present), then
+re-run with `-B build-muse-aipi`. `tools/muse/monitor.py PORT [secs]` (default 8 s,
+115200 baud) needs no build dir at all.
+
+**Serial output contains an SDK-token prefix.** The firmware logs the first 12
+characters of the `mgst_` SDK token at three places (`%.12s` in source):
+
+| Source | Log line | When |
+|---|---|---|
+| `main/app.c` (~2495) | `  SDK token:  mgst_xxxxxxx` | every boot (banner) |
+| `main/link_pairing.c` (~1051) | `pairing_confirmed carries SDK token mgst_xxxxxxx` | pairing confirmation |
+| `main/vm_api.c` (~425) | `refresh carries SDK token mgst_xxxxxxx` | every device-token refresh |
+
+Treat **any** `mgst_` occurrence in serial output as sensitive, not only the boot
+banner. Before sharing a log anywhere (chat, issue, commit), save it to a file
+outside the repo and redact it, then share only the redacted file:
+
+```sh
+python tools/muse/monitor.py "$(python tools/muse/ports.py aipi)" 20 > ~/boot.log
+sed -E 's/mgst_[A-Za-z0-9_-]+/mgst_REDACTED/g' ~/boot.log > ~/boot.redacted.log
+grep -oE 'mgst_[A-Za-z0-9_-]+' ~/boot.redacted.log | sort -u   # must print only: mgst_REDACTED
+```
+
+Delete `~/boot.log` once done (it holds the unredacted prefix).
 
 A healthy boot (`AGENTS.md` Monitor section; `main/main.c`, `main/app.c`):
 
@@ -270,7 +308,7 @@ the AIPI's aux button goes through `menu_button`. Powering off on the AIPI is me
 | Symptom | Likely cause / action |
 |---|---|
 | `ports.py aipi` or `ls /dev/cu.usb*` finds nothing | Charge-only cable (swap), board not powered (battery switch), or the stock firmware has USB-JTAG off. Try another port/cable; `system_profiler SPUSBDataType` should show "USB JTAG/serial debug unit". |
-| esptool "Failed to connect" / "No serial data received" | Put the ESP32-S3 in download mode (hold the BOOT/GPIO0 strapping button while plugging in USB, per the quick-start guide; AIPI Lite's GPIO0 access is **unverified** until the hardware arrives). The AIPI's two user buttons are GPIO42/GPIO1, neither is BOOT. Then re-run flash with `--after hard-reset` and power-cycle. |
+| esptool "Failed to connect" / "No serial data received" | Put the ESP32-S3 in download mode (hold the BOOT/GPIO0 strapping button while plugging in USB, per the quick-start guide; AIPI Lite's GPIO0 access is **unverified** until the hardware arrives). The AIPI's two user buttons are GPIO42/GPIO1, neither is BOOT. Then re-run flash with `--after hard-reset` and power-cycle. **Fallback if no BOOT/GPIO0 button is reachable (unverified on the AIPI):** the ESP32-S3's built-in USB-Serial/JTAG normally enters download mode on its own via esptool's reset sequence, so no button should be needed. From `build-muse-aipi/`, retry with the USB reset and a lower baud: `python -m esptool --chip esp32s3 -p PORT -b 115200 --before usb-reset --after hard-reset write-flash "@flash_args"` (`usb-reset` is a valid `--before` choice in esptool 5.4.0). If that fails too, unplug, switch the battery off, replug and retry straight away. |
 | Port disappears after flash | Normal: the chip resets and USB re-enumerates, possibly under a new `/dev/cu.usbmodem*` name. Re-run `ports.py aipi`. |
 | Build: stale or wrong config | Delete `build-muse-aipi/` (and re-enter the token), rebuild. `validate_config.cmake` stops the build if config is stale. |
 | Build: component manager / lvgl error | `rm -rf managed_components dependencies.lock` and rebuild (`board.sh` does this itself). Build one board at a time. |
@@ -288,7 +326,7 @@ the AIPI's aux button goes through `menu_button`. Powering off on the AIPI is me
 ```sh
 . ~/esp/esp-idf-v6.0.1/export.sh
 cd ~/builds/muse-charm/scratch/muse-gadget-sdk/esp32
-idf.py -p "$(python tools/muse/ports.py aipi)" erase-flash
+idf.py -B build-muse-aipi -p "$(python tools/muse/ports.py aipi)" erase-flash   # -B is mandatory (see Monitor)
 tools/muse/board.sh flash aipi
 ```
 
@@ -307,7 +345,7 @@ cover it; back up the stock flash first if wanted (`python -m esptool --chip esp
 - [ ] `tools/muse/board.sh build aipi` (expect exit 0, ~1-2 min, `Project build complete`; token warning gone).
 - [ ] **GATE 2:** plug the board in with USB-C. `python tools/muse/ports.py aipi` prints a port.
 - [ ] `tools/muse/board.sh flash aipi` (expect `Hash of data verified`).
-- [ ] `idf.py -p "$(python tools/muse/ports.py aipi)" monitor`: see `link.main: Muse Gadget starting` and a `SDK token:  mgst_` prefix (not `(none)`).
+- [ ] `idf.py -B build-muse-aipi -p "$(python tools/muse/ports.py aipi)" monitor` (never drop `-B build-muse-aipi`): see `link.main: Muse Gadget starting` and a `SDK token:  mgst_` prefix (not `(none)`).
 - [ ] **GATE 3:** Muse app > Settings > Devices > Developer mode > Add Device > `MuseGadget-XXXXXX`; press bottom-right to confirm.
 - [ ] Verify avatar, push-to-talk, first voice round trip.
-- [ ] Anything odd: capture the log with the token prefix line removed; use the troubleshooting table; last resort clean re-flash.
+- [ ] Anything odd: capture the log to a file outside the repo, redact with `sed -E 's/mgst_[A-Za-z0-9_-]+/mgst_REDACTED/g' ~/boot.log > ~/boot.redacted.log` and share only `boot.redacted.log` (any `mgst_` is sensitive: banner, pairing and refresh lines all carry it); use the troubleshooting table; last resort clean re-flash.

@@ -73,8 +73,15 @@
   `CONFIG_GADGET_SDK_TOKEN`, compiled into the firmware. Device hands it to the
   app inside the encrypted pairing session. The device token is separate: minted
   by app + BLE pairing, stored in NVS. A token-less build compiles with a CMake
-  warning but will not pair, so flash day needs a token-set rebuild. The boot log
-  prints the first 12 characters of the token.
+  warning but will not pair, so flash day needs a token-set rebuild. Serial output
+  carries the first 12 characters of the token at three sites, not just boot: the
+  boot banner (`main/app.c`), pairing confirmation (`main/link_pairing.c`) and every
+  device-token refresh (`main/vm_api.c`). Treat any `mgst_` in a log as sensitive;
+  redact with `sed -E 's/mgst_[A-Za-z0-9_-]+/mgst_REDACTED/g'` before sharing.
+- **Every `idf.py` serial command needs `-B build-muse-aipi`** (monitor,
+  erase-flash). The SDK's `sdkconfig.defaults` targets esp32c5, so a bare `idf.py`
+  configures a stray `esp32/build/` + `esp32/sdkconfig` for the wrong chip; delete
+  both if that happens. Runbook fixed accordingly.
 - **Still hardware/human gated (Oct 8):** (1) Kevin fetches the SDK token,
   (2) Kevin plugs in the board over a data-capable USB-C cable (not included in
   the box), (3) Kevin pairs in Muse app > Settings > Devices > Developer mode.
