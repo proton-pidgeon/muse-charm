@@ -1704,7 +1704,10 @@ int vesper_node_status_json(char *out, size_t cap)
     return snprintf(out, cap,
                     "{\"node_id\":\"%s\",\"credential\":%s,\"claim\":\"%s\",\"firmware\":\"%s\",\"update\":\"%s\"}",
                     s_node_id, vesper_cred_present() ? "true" : "false", vc_state_name(&s_claim),
-                    vo_version_parse(s_fw_version, &(vo_version_t){ 0 }) ? s_fw_version : "unknown", s_ota_status);
+                    vo_version_parse(esp_app_get_description()->version, &(vo_version_t){ 0 })
+                        ? esp_app_get_description()->version
+                        : "unknown",
+                    s_ota_status);
 }
 
 void vesper_node_set_updater(vesper_updater_t updater)
