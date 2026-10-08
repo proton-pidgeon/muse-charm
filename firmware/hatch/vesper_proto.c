@@ -113,8 +113,13 @@ size_t vp_utf8_append(char *out, size_t cap, const char *src)
     if (have >= cap) {
         return 0;
     }
-    size_t len = strlen(src);
-    return vp_utf8_copy(out + have, cap - have, src, len);
+    size_t n = utf8_fit(src, strlen(src), cap - have - 1);
+    /* Terminate the new end before copying over the old NUL, so a lock-free
+     * reader on another task (muse_hatch_turn_caption) never finds the
+     * buffer without a terminator. */
+    out[have + n] = '\0';
+    memcpy(out + have, src, n);
+    return n;
 }
 
 /* Encodes code point cp; returns its length (1-4). */
