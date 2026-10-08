@@ -174,6 +174,22 @@ bool vp_json_bool(const char *json, size_t len, const char *key, bool *found);
  * fraction or exponent) no larger than UINT32_MAX. False otherwise (*out is then 0). */
 bool vp_json_uint(const char *json, size_t len, const char *key, uint32_t *out);
 
+/*
+ * Arrays (task 18: GET /announcements). vp_json_object_ok: json[0..len) is one object and
+ * nothing but whitespace follows it (truncated or trailing junk is refused). vp_json_array:
+ * the top-level member `key` is an array; its elements are then walked with vp_json_next,
+ * which gives each element's span (an object element is then read with vp_json_string). It
+ * returns false at the end of the array, or when the array is malformed (it->bad).
+ */
+typedef struct {
+    const char *p, *end;
+    bool first, done, bad;
+} vp_json_iter_t;
+
+bool vp_json_object_ok(const char *json, size_t len);
+bool vp_json_array(const char *json, size_t len, const char *key, vp_json_iter_t *it);
+bool vp_json_next(vp_json_iter_t *it, const char **elem, size_t *elem_len);
+
 /* ---- SSE framing ---- */
 
 typedef void (*vp_sse_event_cb)(void *ctx, const char *event, const char *data, size_t len);

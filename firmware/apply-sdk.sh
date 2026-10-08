@@ -10,8 +10,9 @@
 #      that already has the whole series is detected as such)
 #   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
 #      the protocol core, the reply-speech helpers, the claim flow, the node
-#      credential store, the BLE host and the update check; and VERSION, the
-#      firmware version the build stamps into the image) into
+#      credential store, the BLE host, the update check and the announcement
+#      poll; and VERSION, the firmware version the build stamps into the
+#      image) into
 #      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
@@ -44,46 +45,51 @@ echo "deleted: $deleted path(s)"
 # 2. patches
 # A later patch may edit lines an earlier one added (0004 edits 0002's app.c),
 # so "is patch N applied?" can't be asked of patch N alone once N+1 is on top.
-# First ask it of the whole series: on a scratch copy of the files it touches,
-# reverse the patches last to first. If that works, the tree is fully patched.
-series_applied() {
-    local scratch rc=0 f p
+# Ask it of a prefix of the series instead: on a scratch copy of the files the
+# first k patches touch, reverse them last to first. The longest prefix that
+# reverses cleanly is what the tree already has (all of it: fully patched;
+# none: pristine); the rest of the series is applied on top, in order. So a
+# tree patched by an older checkout of this repo picks up just the new patches.
+patches=()
+while IFS= read -r p; do patches+=("$p"); done < <(ls "$here"/sdk-patches/*.patch | sort)
+prefix_applied() {
+    local k="$1" scratch rc=0 f i
+    [ "$k" -gt 0 ] || return 0
     scratch="$(mktemp -d)"
-    for f in $(sed -n 's|^+++ b/||p' "$here"/sdk-patches/*.patch | sort -u); do
+    for f in $(sed -n 's|^+++ b/||p' "${patches[@]:0:$k}" | sort -u); do
         [ -e "$sdk/$f" ] || { rm -rf "$scratch"; return 1; }
         mkdir -p "$scratch/$(dirname "$f")"
         cp "$sdk/$f" "$scratch/$f"
     done
-    for p in $(ls "$here"/sdk-patches/*.patch | sort -r); do
-        (cd "$scratch" && git apply --reverse "$p" 2>/dev/null) || { rc=1; break; }
+    for ((i = k - 1; i >= 0; i--)); do
+        (cd "$scratch" && git apply --reverse "${patches[$i]}" 2>/dev/null) || { rc=1; break; }
     done
     rm -rf "$scratch"
     return $rc
 }
-if series_applied; then
-    for patch in "$here"/sdk-patches/*.patch; do echo "already applied: $(basename "$patch")"; done
-else
-for patch in "$here"/sdk-patches/*.patch; do
+have=${#patches[@]}
+while [ "$have" -gt 0 ] && ! prefix_applied "$have"; do have=$((have - 1)); done
+for ((i = 0; i < ${#patches[@]}; i++)); do
+    patch="${patches[$i]}"
     name="$(basename "$patch")"
-    if git -C "$sdk" apply --check "$patch" 2>/dev/null; then
+    if [ "$i" -lt "$have" ]; then
+        echo "already applied: $name"
+    elif git -C "$sdk" apply --check "$patch" 2>/dev/null; then
         git -C "$sdk" apply "$patch"
         echo "applied: $name"
-    elif git -C "$sdk" apply --reverse --check "$patch" 2>/dev/null; then
-        echo "already applied: $name"
     else
-        echo "error: $name neither applies nor is applied (is $sdk pristine $base?)" >&2
+        echo "error: $name doesn't apply on top of the ${i} before it (is $sdk pristine $base?)" >&2
         git -C "$sdk" apply --check "$patch" || true
         exit 1
     fi
 done
-fi
 
 # 3. the Vesper hatch backend
 dest="$sdk/esp32/components/muse/vesper"
 mkdir -p "$dest"
 for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h \
          vesper_claim.c vesper_claim.h vesper_cred.c vesper_cred.h vesper_ble.c vesper_ble.h \
-         vesper_ota.c vesper_ota.h VERSION; do
+         vesper_ota.c vesper_ota.h vesper_announce.c vesper_announce.h VERSION; do
     if ! cmp -s "$here/hatch/$f" "$dest/$f"; then
         cp "$here/hatch/$f" "$dest/$f"
         echo "installed: components/muse/vesper/$f"

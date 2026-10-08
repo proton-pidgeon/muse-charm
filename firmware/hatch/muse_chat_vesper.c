@@ -53,6 +53,22 @@
  * A check the server answers is also what lets app.c keep a freshly
  * installed image (vesper_node_update_channel_ok).
  *
+ * Announcements (task 18): while the node is idle (no turn, claim request,
+ * update install or speech, Muse in IDLE mode, not resting) and claimed, it
+ * asks GET <host>/announcements every 15 s (backing off to 60 s on errors,
+ * longer on a 429's Retry-After), with the turn's bearer and credential.
+ * vesper_announce.c parses the reply. Each due timer/reminder is then said
+ * on this task through the same reply-MP3 path as a turn's messages
+ * (tts_open/fetch/decode, or the caption paced over silence when it has no
+ * audio_url), except that the audio goes to a private stream buffer that
+ * this task plays itself (muse_audio_write), since the voice task only plays
+ * during a turn; its caption is set while Muse stays IDLE. A talk press
+ * always wins: it changes Muse's mode (and starts a turn, which ends the
+ * announcement), the playback stops within one 20 ms chunk, and whatever was
+ * left is dropped: the server hands each announcement out only once. No
+ * voice-task event is emitted for an announcement, and its text is never
+ * logged.
+ *
  * Everything network-side runs on one task. The voice task talks to it through
  * a command queue, a stream buffer of mic audio, an event queue (captions) and
  * a stream buffer of reply audio, exactly as with the stock backend. A
@@ -82,10 +98,12 @@
 #include "freertos/task.h"
 
 #include "minimp3.h"
+#include "muse_audio.h"
 #include "muse_chat_priv.h"
 #include "muse_settings.h"
 #include "muse_state.h"
 #include "muse_wifi.h"
+#include "vesper_announce.h"
 #include "vesper_audio.h"
 #include "vesper_ble.h"
 #include "vesper_claim.h"
@@ -100,7 +118,7 @@ static const char *TAG = "vesper_chat";
 #define OUT_BYTES (MIC_RATE * 2 * 2)       /* 2 s of decoded reply audio */
 #define STAGE_BYTES 4096                   /* PCM per upload chunk (128 ms) */
 #define EV_TEXT 72
-#define MAX_MSGS 4
+#define MAX_MSGS 5                         /* a turn's replies, or a poll's announcements (VN_MAX) */
 #define TEXT_MAX 1024                      /* a message's text, for captions timed to its speech */
 #define SPEECH_CHARS_PER_S 14              /* until the speech's length is known */
 #define TEXT_CHARS_PER_S 16                /* reading pace, a little over speech */
@@ -123,6 +141,15 @@ static const char *TAG = "vesper_chat";
 #define TTS_MAX_BYTES (2 * 1024 * 1024)    /* a message's MP3, at most (the backend caps the text at 500 chars) */
 /* Resampled samples one MP3 frame can make: 1152 mono samples, at worst 8 kHz -> 16 kHz, plus the flush. */
 #define TTS_OUT_MAX (2 * (MINIMP3_MAX_SAMPLES_PER_FRAME / 2) + 2 * VA_RS_TAPS + 8)
+
+/* Announcements (task 18) */
+#define ANN_OUT_BYTES (MIC_RATE * 2)       /* 1 s of decoded announcement audio, played by this task */
+#define ANN_TIMEOUT_MS 5000                /* the poll: connect + response */
+#define ANN_PLAY_CHUNKS 5                  /* 20 ms chunks written per pass (a press is seen within one) */
+#define ANN_GAP_CHUNKS 25                  /* 500 ms of silence between announcements (also flushes the DMA) */
+#define ANN_HOLD_CHUNKS (TEXT_HOLD_S * 50) /* after the last one: its caption stays up over silence */
+_Static_assert(VN_MAX <= MAX_MSGS, "a poll's announcements must fit the message slots");
+_Static_assert(VN_TEXT_MAX <= TEXT_MAX, "an announcement's text must fit a message's");
 
 /* ---- Voice task <-> hatch task ---- */
 
@@ -178,6 +205,7 @@ typedef struct {
 typedef struct {
     phase_t phase;
     uint32_t gen;
+    bool announce;           /* task 18: these messages are announcements, played by this task */
     esp_http_client_handle_t http;
     vp_url_t base;
     char url[VP_URL_MAX];
@@ -237,6 +265,20 @@ static uint8_t *s_tts_buf;   /* TTS_BUF, PSRAM, allocated once */
 static int16_t *s_tts_pcm;   /* MINIMP3_MAX_SAMPLES_PER_FRAME: one decoded frame */
 static int16_t *s_tts_out;   /* TTS_OUT_MAX: the frame at 16 kHz */
 
+/* Where decoded speech (and paced silence) goes: s_out (the voice task plays a turn's) or, for
+ * announcements (task 18), s_ann_out, which only this task reads and writes. */
+static StreamBufferHandle_t s_sink;
+
+/* Announcements (task 18), all this task's. */
+static StreamBufferHandle_t s_ann_out;
+static vn_sched_t s_ann_sched;
+EXT_RAM_BSS_ATTR static vn_list_t s_ann;
+EXT_RAM_BSS_ATTR static char s_ann_body[VN_BODY_MAX];
+static uint32_t s_ann_played;        /* frames of s_ann_out played (the caption's clock) */
+static uint32_t s_ann_quiet;         /* silence chunks written since the last real audio */
+static vn_verdict_t s_ann_last = VN_OK;
+EXT_RAM_BSS_ATTR static char s_ann_shown[MUSE_CAPTION_MAX];   /* the caption announce_play last put up */
+
 static int64_t now_us(void)
 {
     return esp_timer_get_time();
@@ -251,6 +293,9 @@ static void *psram_alloc(size_t n)
 
 static void emit(muse_hatch_ev_t type, const char *text)
 {
+    if (s_turn.announce) {
+        return;   /* the voice task isn't in a turn: nothing of an announcement is its */
+    }
     ev_t ev = { .type = type, .gen = s_turn.gen };
     if (type == MUSE_HATCH_EV_HEARD) {
         char tail[EV_TEXT];
@@ -371,6 +416,16 @@ static void turn_finish(void)
     s_turn.silent = false;
     memset(s_turn.auth, 0, sizeof(s_turn.auth));
     memset(s_turn.cred, 0, sizeof(s_turn.cred));
+    if (s_turn.announce) {
+        /* Whatever wasn't said is dropped (the server hands an announcement out once). */
+        s_turn.announce = false;
+        s_sink = s_out;
+        xStreamBufferReset(s_ann_out);
+        muse_state_set_level(0);
+        if (muse_state_mode(NULL) == MUSE_MODE_IDLE) {
+            muse_state_set_caption("%s", "");
+        }
+    }
 }
 
 static void turn_fail(const char *why)
@@ -532,9 +587,10 @@ static bool load_config(bool need_cred)
     return ok;
 }
 
-static void turn_begin(uint32_t gen)
+/* A clean slate for a turn (or an announcement), keeping the buffers allocated once. */
+static void turn_reset(uint32_t gen)
 {
-    if (s_turn.phase != P_IDLE) {
+    if (s_turn.phase != P_IDLE || s_turn.announce) {
         turn_finish();
     }
     uint8_t *note = s_turn.note, *chunk = s_turn.chunk;
@@ -553,7 +609,11 @@ static void turn_begin(uint32_t gen)
     s_turn.t_status = s_turn.t_text = s_turn.t_done = 0;
     s_turn.gen = gen;
     s_turn.start_us = now_us();
+}
 
+static void turn_begin(uint32_t gen)
+{
+    turn_reset(gen);
     if (!muse_hatch_configured()) {
         turn_fail("SET UP VESPER FIRST");
         return;
@@ -712,7 +772,7 @@ static void push_reply(const int16_t *pcm, size_t n)
 {
     if (n && s_turn.gen == atomic_load(&s_gen)) {
         size_t bytes = n * sizeof(int16_t);
-        size_t sent = xStreamBufferSend(s_out, pcm, bytes, 0);
+        size_t sent = xStreamBufferSend(s_sink, pcm, bytes, 0);
         if (sent != bytes) {
             ESP_LOGW(TAG, "reply buffer full: %u of %u bytes dropped", (unsigned)(bytes - sent), (unsigned)bytes);
         }
@@ -895,7 +955,7 @@ static void tts_decode(void)
     int i = s_turn.tts_msg;
     msg_t *m = &s_turn.msgs[i];
     size_t off = 0;
-    while (va_mp3_may_decode(&s_tts.mp3, off) && xStreamBufferSpacesAvailable(s_out) >= TTS_OUT_MAX * sizeof(int16_t)) {
+    while (va_mp3_may_decode(&s_tts.mp3, off) && xStreamBufferSpacesAvailable(s_sink) >= TTS_OUT_MAX * sizeof(int16_t)) {
         mp3dec_frame_info_t info;
         int samples = mp3dec_decode_frame(&s_tts.dec, s_tts.mp3.buf + off, (int)(s_tts.mp3.len - off), s_tts_pcm, &info);
         if (!info.frame_bytes) {
@@ -949,7 +1009,7 @@ static void tts_decode(void)
         return;
     }
     if (s_tts.rate && !s_tts.flushed) {
-        if (xStreamBufferSpacesAvailable(s_out) < TTS_OUT_MAX * sizeof(int16_t)) {
+        if (xStreamBufferSpacesAvailable(s_sink) < TTS_OUT_MAX * sizeof(int16_t)) {
             return;   /* the resampler's tail goes next time */
         }
         push_reply(s_tts_out, va_rs_flush(&s_tts.rs, s_tts_out));
@@ -979,6 +1039,11 @@ static void start_showing(void)
     if (s_turn.tts_msg >= 0) {
         return;
     }
+    if (s_turn.announce && (xStreamBufferBytesAvailable(s_ann_out) || s_ann_quiet < ANN_GAP_CHUNKS)) {
+        /* The last one is still playing, or the gap after it isn't over: tts_open() blocks, and
+         * the speaker must hold silence, not stale audio, while it does. */
+        return;
+    }
     for (int i = 0; i < s_turn.nmsgs; i++) {
         msg_t *m = &s_turn.msgs[i];
         if (m->tts != TTS_QUEUED) {
@@ -1005,7 +1070,7 @@ static void pace_silently(void)
     static const int16_t zeros[256];
     msg_t *m = &s_turn.msgs[s_turn.tts_msg];
     uint32_t end = m->pcm_start + m->pcm_frames + TEXT_HOLD_S * MIC_RATE;
-    while (s_turn.pcm_out < end && xStreamBufferSpacesAvailable(s_out) >= sizeof(zeros)) {
+    while (s_turn.pcm_out < end && xStreamBufferSpacesAvailable(s_sink) >= sizeof(zeros)) {
         uint32_t n = end - s_turn.pcm_out < 256 ? end - s_turn.pcm_out : 256;
         push_reply(zeros, n);
     }
@@ -1098,6 +1163,14 @@ static void check_turn(void)
         if (s_turn.msgs[i].tts == TTS_QUEUED || s_turn.msgs[i].tts == TTS_ACTIVE) {
             return;
         }
+    }
+    if (s_turn.announce) {
+        if (xStreamBufferBytesAvailable(s_ann_out) || s_ann_quiet < ANN_HOLD_CHUNKS) {
+            return;   /* still playing, or the last caption's hold */
+        }
+        ESP_LOGI(TAG, "announcements done: %d in %.1fs", s_turn.nmsgs, (now_us() - s_turn.start_us) / 1e6);
+        turn_finish();
+        return;
     }
     ESP_LOGI(TAG, "turn done: %d message(s) in %.1fs", s_turn.nmsgs, (now_us() - s_turn.start_us) / 1e6);
     log_timing();
@@ -1527,6 +1600,193 @@ static void ota_step(void)
     memset(s_turn.auth, 0, sizeof(s_turn.auth));
 }
 
+/* ---- Announcements (task 18) ---- */
+
+/*
+ * GET <base>/announcements with the turn's headers (load_config(true) put them in s_turn):
+ * Authorization, X-Node-Id, X-Vesper-Node-Protocol, X-Node-Credential, and Accept. The body
+ * goes into s_ann_body; *len == VN_BODY_MAX means it was longer (vn_parse refuses it).
+ * Returns the HTTP status, 0 for no response.
+ */
+static int ann_get(const char *url, size_t *len, claim_resp_t *resp)
+{
+    *len = 0;
+    memset(resp, 0, sizeof(*resp));
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = ANN_TIMEOUT_MS,
+        .event_handler = on_claim_http_event,  /* Retry-After, for a 429 */
+        .user_data = resp,
+        .buffer_size = 1024,
+        .buffer_size_tx = VP_AUTH_MAX + 512,   /* the request line and headers, bearer and credential included */
+        .disable_auto_redirect = true,         /* never carry them elsewhere */
+        .crt_bundle_attach = s_turn.base.https ? esp_crt_bundle_attach : NULL,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    if (!c) {
+        return 0;
+    }
+    for (int i = 0; i < 3; i++) {   /* Authorization, X-Node-Id, X-Vesper-Node-Protocol */
+        esp_http_client_set_header(c, s_turn.hdrs[i].name, s_turn.hdrs[i].value);
+    }
+    esp_http_client_set_header(c, s_turn.hdrs[VP_TURN_HEADERS].name, s_turn.hdrs[VP_TURN_HEADERS].value);
+    esp_http_client_set_header(c, "Accept", "application/json");
+    int status = 0;
+    if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0) {
+        status = esp_http_client_get_status_code(c);
+        while (*len < VN_BODY_MAX) {
+            int n = esp_http_client_read(c, s_ann_body + *len, (int)(VN_BODY_MAX - *len));
+            if (n <= 0) {
+                break;
+            }
+            *len += (size_t)n;
+        }
+    }
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);   /* frees its copies of the headers */
+    return status;
+}
+
+/* The polled announcements become the messages of a "turn" this task says itself. */
+static void announce_start(void)
+{
+    int speech = 0;
+    for (int i = 0; i < s_ann.n; i++) {
+        msg_t *m = &s_turn.msgs[i];
+        memset(m, 0, sizeof(*m));
+        strlcpy(msg_text(i), s_ann.items[i].text, TEXT_MAX);
+        m->len = strlen(msg_text(i));
+        m->done = true;
+        m->tts = TTS_QUEUED;
+        speech += s_ann.items[i].audio[0] && vesper_tts_slot_offer(s_ann.items[i].audio, i);
+    }
+    s_turn.nmsgs = s_ann.n;
+    s_turn.cur = s_turn.tts_msg = -1;
+    s_turn.stream_done = true;
+    s_turn.announce = true;
+    xStreamBufferReset(s_ann_out);
+    s_sink = s_ann_out;
+    s_ann_played = 0;
+    s_ann_shown[0] = '\0';
+    s_ann_quiet = ANN_GAP_CHUNKS;   /* nothing is playing: the first one starts at once */
+    s_turn.phase = P_PACE;
+    ESP_LOGI(TAG, "announcements: %d to say (%d with speech, %u dropped, %u speech refused)", s_ann.n, speech,
+             s_ann.dropped, s_ann.audio_refused);
+    memset(&s_ann, 0, sizeof(s_ann));   /* the texts live in the messages now */
+    if (muse_state_asleep()) {
+        muse_state_set_asleep(false);   /* on USB power (asleep on battery, nothing is polled): show it */
+    } else {
+        muse_state_poke();
+    }
+}
+
+/* One poll, if one is due and the node is idle, claimed and online. */
+static void announce_step(void)
+{
+    if (s_turn.phase != P_IDLE || s_turn.announce || !s_ann_out || atomic_load(&s_ota_installing)) {
+        return;
+    }
+    int64_t now = now_us() / 1000;
+    if (!vn_sched_due(&s_ann_sched, now) || !atomic_load(&s_claimed) || !vesper_cred_present() ||
+        !muse_hatch_configured() || !muse_wifi_connected() || muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+        return;   /* stays due until the node is idle, claimed and online */
+    }
+    if (uxQueueMessagesWaiting(s_cmds)) {
+        return;   /* a press (or a setting) goes first */
+    }
+    turn_reset(atomic_load(&s_gen));
+    char url[VP_URL_MAX];
+    claim_resp_t resp = { 0 };
+    size_t len = 0;
+    int status = -1;
+    if (load_config(true) && vn_url(&s_turn.base, url, sizeof(url))) {
+        status = ann_get(url, &len, &resp);
+    }
+    bool parsed = status == 200 && vn_parse(s_ann_body, len, &s_turn.base, &s_ann);
+    vn_verdict_t v = status < 0 ? VN_FAILED : vn_verdict(status, parsed);
+    if (status == 403) {
+        char code[VP_CODE_MAX];
+        if (vp_json_string(s_ann_body, len < VN_BODY_MAX ? len : 0, "error", code, sizeof(code)) != VP_JSON_STRING) {
+            code[0] = '\0';
+        }
+        if (vc_needs_claim(status, code)) {
+            ESP_LOGW(TAG, "announcements: the node credential was refused; claiming again");
+            vc_reclaim(&s_claim, now_us() / 1000);
+            atomic_store(&s_claimed, false);
+        }
+    }
+    memset(s_ann_body, 0, len < VN_BODY_MAX ? len : VN_BODY_MAX);
+    vn_sched_done(&s_ann_sched, v, resp.retry_after, now_us() / 1000);
+    if (v != VN_OK && (v != s_ann_last || s_ann_sched.failures == 1 || s_ann_sched.failures % 20 == 0)) {
+        ESP_LOGW(TAG, "announcements: %s (HTTP %d); next poll in %d s",
+                 status < 0 ? "server URL, token or credential unusable" : vn_verdict_name(v), status,
+                 (int)(vn_sched_wait_ms(&s_ann_sched, now_us() / 1000) / 1000));
+    } else if (v == VN_OK && s_ann_last != VN_OK) {
+        ESP_LOGI(TAG, "announcements: polling again");
+    }
+    s_ann_last = v;
+    if (v != VN_OK || !s_ann.n) {
+        memset(s_turn.auth, 0, sizeof(s_turn.auth));
+        memset(s_turn.cred, 0, sizeof(s_turn.cred));
+        memset(&s_ann, 0, sizeof(s_ann));
+        return;
+    }
+    if (uxQueueMessagesWaiting(s_cmds) || muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+        ESP_LOGI(TAG, "announcements: %d dropped: a press came first", s_ann.n);
+        memset(s_turn.auth, 0, sizeof(s_turn.auth));
+        memset(s_turn.cred, 0, sizeof(s_turn.cred));
+        memset(&s_ann, 0, sizeof(s_ann));
+        return;
+    }
+    announce_start();   /* keeps the headers: the MP3 GETs need them; turn_finish wipes them */
+}
+
+/* Plays what the announcements have decoded (or paced), with the caption following it. */
+static void announce_play(void)
+{
+    EXT_RAM_BSS_ATTR static int16_t buf[MUSE_AUDIO_CHUNK];
+    static const int16_t silence[MUSE_AUDIO_CHUNK];
+    EXT_RAM_BSS_ATTR static char page[MUSE_CAPTION_MAX];
+    for (int k = 0; k < ANN_PLAY_CHUNKS; k++) {
+        if (muse_state_mode(NULL) != MUSE_MODE_IDLE || atomic_load(&s_resting)) {
+            /* A press (or anything else that takes Muse out of IDLE) always wins. */
+            ESP_LOGI(TAG, "announcements interrupted (%s)", atomic_load(&s_resting) ? "resting" : "Muse busy");
+            turn_finish();
+            return;
+        }
+        size_t n = xStreamBufferReceive(s_ann_out, buf, sizeof(buf), 0) / sizeof(int16_t);
+        const int16_t *out = n ? buf : silence;
+        if (!n) {
+            /* Between announcements, before the first audio and after the last: keep the speaker
+             * fed with silence so it never replays stale DMA, and time the gaps by it. */
+            if (s_turn.tts_msg >= 0 && s_ann_quiet >= ANN_GAP_CHUNKS) {
+                break;   /* decoding: the audio is on its way, don't pad the speech with silence */
+            }
+            n = MUSE_AUDIO_CHUNK;
+            s_ann_quiet++;
+        } else {
+            s_ann_quiet = 0;
+        }
+        if (muse_audio_write(out, n) != ESP_OK) {
+            ESP_LOGW(TAG, "announcements: speaker write failed");
+            turn_finish();
+            return;
+        }
+        if (out == buf) {
+            s_ann_played += (uint32_t)n;
+            muse_state_set_level(muse_audio_level(buf, n));
+        } else {
+            muse_state_set_level(0);
+        }
+    }
+    if (muse_hatch_turn_caption(s_ann_played, page, sizeof(page)) && strcmp(page, s_ann_shown) != 0 &&
+        muse_state_mode(NULL) == MUSE_MODE_IDLE) {
+        strlcpy(s_ann_shown, page, sizeof(s_ann_shown));
+        muse_state_set_caption("%s", page);
+    }
+}
+
 /* ---- Task ---- */
 
 static void handle(const cmd_t *cmd)
@@ -1599,12 +1859,16 @@ static void hatch_task(void *arg)
             start_showing();
             speak();
         }
+        if (s_turn.announce && s_turn.phase == P_PACE) {
+            announce_play();   /* this task is the player for announcements (task 18) */
+        }
         if (s_turn.phase != P_IDLE && s_turn.phase != P_LISTEN) {
             check_turn();
         }
         if (!atomic_load(&s_resting)) {
             claim_step();
             ota_step();
+            announce_step();
         }
     }
 }
@@ -1658,6 +1922,13 @@ void muse_hatch_start(void)
         s_tts_pcm = s_tts_out = NULL;
     }
     va_mp3_init(&s_tts.mp3, s_tts_buf, TTS_BUF);
+    s_sink = s_out;
+    /* Announcements (task 18): without their buffer the node simply never polls. */
+    s_ann_out = xStreamBufferCreateWithCaps(ANN_OUT_BYTES, 1, MALLOC_CAP_SPIRAM);
+    if (!s_ann_out) {
+        ESP_LOGE(TAG, "no memory for announcements; they are off");
+    }
+    vn_sched_init(&s_ann_sched, now_us() / 1000);
     /* The claim flow: claimed if NVS holds a credential, else claim once the server is reachable. */
     vesper_cred_load();   /* the boot task: an internal-RAM stack, NVS up (muse_settings_init) */
     bool have = vesper_cred_present();
