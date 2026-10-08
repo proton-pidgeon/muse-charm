@@ -9,10 +9,10 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `apply-sdk.sh <SDK_DIR>` | Idempotent. Deletes the Meta transport, applies `sdk-patches/*.patch`, installs `hatch/` and the avatar, and checks that `main/voice.c` is unchanged |
 | `sdk-patches/delete.txt` | Files the patch set removes from the SDK |
 | `sdk-patches/000N-*.patch` | Edits to tracked SDK files (`git apply` format against `b1a3822`) |
-| `hatch/` | The Vesper `muse_hatch_*` backend (task 09) and its reply speech (task 10), installed as `<SDK>/esp32/components/muse/vesper/` |
-| `hatch/test/` | Host tests of the protocol core and the speech helpers, and a live-turn harness |
+| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10) and the claim flow, node credential and BLE host (task 11), installed as `<SDK>/esp32/components/muse/vesper/` |
+| `hatch/test/` | Host tests of the protocol core, the claim flow and the speech helpers, the log-hygiene check, and the live-turn and live-claim harnesses |
 | `avatar/` | The Vesper owl avatar (task 04) |
-| `Makefile` | `make -C firmware test` and `make -C firmware live-turn` (host only, no ESP-IDF) |
+| `Makefile` | `make -C firmware test`, `make -C firmware live-turn` and `make -C firmware live-claim` (host only, no ESP-IDF) |
 
 ## Decision (task 09): a patch set tracked in THIS repo, not an SDK fork
 
@@ -26,14 +26,24 @@ stays a re-clonable upstream at `b1a3822`, and `apply-sdk.sh` rebuilds the Vespe
    - `main/app.c` cut down to Wi-Fi, OTA validation, identity and the Muse glue;
    - the backend selection at `components/muse/CMakeLists.txt` (since task 10 it also builds
      `vesper/vesper_audio.c`: one line, the only SDK-side change task 10 needed);
-   - the `muse_settings` repurpose.
+   - the `muse_settings` repurpose;
+   - since task 11, `0004`: the claim flow's sources in the build, the node's BLE host behind
+     `app_ble_companion_set` and Link's `.ble_started`, the credential forgotten on a setup
+     reset, and the serial console's `>status` `vesper` block and `>claim.forget` (see
+     *Claim flow* below).
+
+   `0004` edits lines that `0002` added (in `app.c` and `muse_glue.c`), so `apply-sdk.sh`
+   can't ask "is `0002` applied?" of `0002` alone once `0004` is on top. It first asks it of the
+   whole series: it reverse-applies the patches, last to first, to a scratch copy of the files
+   they touch. If that works, the tree is fully patched. Otherwise it applies patch by patch as
+   before. Run it twice and the second run changes nothing.
 3. **New Vesper-owned sources** are whole files in `hatch/`, copied into an SDK path that the
    SDK's `.gitignore` already ignores (`components/muse/vesper/`, like `components/muse/avatar/`).
 
 Why not a fork: every change shows up in this repo's diff, where the review gate looks. The patch
 set re-applies to a fresh `b1a3822` clone in one command. Upstream drift stays visible: a patch
 that stops applying fails loudly instead of being merged silently. If the SDK ever needs
-upstream updates, rebase the three patches.
+upstream updates, rebase the patches.
 
 Reproduce from scratch:
 
@@ -58,7 +68,9 @@ Also removed, because only that transport used it: the Noise tunnel and tunnel n
 `image_fetch` (remote-control commands), `muse_chat_link.c` (the no-PSRAM backend over Link's
 session), and the `noise_core` component.
 
-The image is 1,839,104 bytes, down from 2,166,784 for the avatar-only stock build.
+The image was 1,839,104 bytes after task 09, down from 2,166,784 for the avatar-only stock
+build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,712 bytes
+(`0x1f1000`, 51% of the app partition free).
 
 **Kept byte-identical:**
 
@@ -70,6 +82,13 @@ The image is 1,839,104 bytes, down from 2,166,784 for the avatar-only stock buil
 - `muse_wifi`, `identity.c`, `ota.c`, `muse_ble.c`
 
 `apply-sdk.sh` fails if `voice.c` changes.
+
+Task 11 kept that list as it was. `muse_ble.c` in particular is unchanged: the node's new BLE
+host (`hatch/vesper_ble.c`) registers its service and hooks exactly as `ble_server.c` did. The
+one stock file task 11 edits that wasn't already patched is `components/muse/muse_input.c`
+(the serial console, not on the list): `>status` gains a `vesper` block (presence only) and
+`>claim.forget` is new. The kept-identical `muse_ble.c` builds the `>status` `device` block,
+so the credential's presence had to go beside it rather than into it.
 
 **The one `GADGET_SDK_TOKEN` residue:** `identity.c` must stay byte-identical, and its
 `identity_sdk_token()` still names the macro. Nothing calls that function any more, so
@@ -110,6 +129,13 @@ patch set's checks.
 
   Logs carry lengths, statuses and timings only. They never carry the token, transcript or reply
   text.
+- **`vesper_claim.{c,h}`** (task 11) is the node side of the claim flow, pure C like
+  `vesper_proto.c`: claim header building and validation (credential, claim secret, code, room;
+  all header-injection-safe), `/claim/start` and `/claim/poll` response parsing, and the claim
+  state machine with its poll, backoff and `Retry-After` verdicts. See *Claim flow* below.
+- **`vesper_cred.{c,h}`** (task 11) keeps the node credential in NVS `muse:node_cred` and in RAM.
+- **`vesper_ble.{c,h}`** (task 11) is the node's BLE host: Muse's setup service (`muse_ble.c`,
+  unchanged) plus the Vesper claim service.
 - **Wire protocol:** `docs/node-wire-protocol.md` v1. Task 09 added the *Node firmware notes*
   section; the wire shape is unchanged.
 
@@ -121,14 +147,17 @@ NVS namespace `muse`:
   `<host>/turn`.
 - **`node_token`** is a new key for the node bearer. The stock `token` key may hold a Meta device
   token and is never read.
+- **`node_cred`** (task 11) is a new key for the per-node credential (`vnc_…`). The node gets it
+  from the claim flow; it is never typed in. The other `muse` keys are left as they are.
 
-Both are empty until provisioned. The Kconfig fallbacks `CONFIG_VESPER_NODE_URL` and
-`CONFIG_VESPER_NODE_TOKEN` default to `""`. Never commit a token in them. NVS is still plaintext;
-NVS encryption is task 11's call.
+`host` and `node_token` are empty until provisioned. The Kconfig fallbacks
+`CONFIG_VESPER_NODE_URL` and `CONFIG_VESPER_NODE_TOKEN` default to `""`. Never commit a token in
+them. NVS stays plaintext: see *NVS encryption: decision* below.
 
-With BLE pairing (`ble_server.c`) gone, the build has **no BLE host**. The claim flow (task 11)
-brings BLE setup back. Wi-Fi and the backend are provisioned over **Muse's USB serial console**.
-Every line starts with `>`. `wifi.pass` and `hatch.token` are never echoed.
+Wi-Fi and the backend are provisioned over **Muse's USB serial console**, or over BLE with Muse's
+phone-setup service (the same `key=value` commands; task 11 brought the BLE host back, see
+*Claim flow*). Every serial line starts with `>`. `wifi.pass` and `hatch.token` are never
+echoed.
 
 ```
 >wifi.ssid=<network>
@@ -137,12 +166,132 @@ Every line starts with `>`. `wifi.pass` and `hatch.token` are never echoed.
 >hatch.host=https://peggy.fly.dev/vesper-node      (or a LAN URL, see the human gate)
 >hatch.token=<VESPER_NODE_TOKEN>                    (from ~/.config/vesper-voice/node.env)
 >hatch.test                                         (GET <host>/healthz with the bearer)
->status                                             (JSON; "hatch":{"token":true,...})
+>status                                             (JSON; "vesper":{"credential":true,"claim":"claimed"},
+                                                     "hatch":{"token":true,...}: presence only)
+>claim.forget                                       (forget the node credential and claim again)
 ```
 
 You can also join Wi-Fi from Muse's on-screen Wi-Fi settings, or with the
-`CONFIG_HOMEHUB_WIFI_SSID` dev override. A setup reset from the Muse menu forgets the saved Wi-Fi
-and the node token and keeps the server URL.
+`CONFIG_HOMEHUB_WIFI_SSID` dev override. A setup reset from the Muse menu forgets the saved Wi-Fi,
+the node token and the node credential, and keeps the server URL. After the restart the node
+claims again.
+
+### Claim flow (task 11, F3)
+
+`link_pairing.c` (the Muse app's BLE pairing) is gone (task 09). In its place the node claims
+itself from the Vesper node backend (`docs/node-wire-protocol.md`, *Claim flow*). The credential
+model is task 08's (conflict C2): the shared edge bearer plus a per-node `X-Node-Credential`.
+
+- **When.** At boot the node loads `muse:node_cred`. With no credential (a fresh flash, a setup
+  reset, `>claim.forget`) it claims as soon as the server URL and token are set and Wi-Fi is up.
+  A `403 node_unauthorized` on `/turn` sends a claimed node back to the claim flow too. The stored
+  credential stays in NVS until a new one replaces it, so a refusal that was only a blip costs a
+  re-approval, never the node's identity.
+- **Start.** `POST <host>/claim/start` with the bearer and `X-Node-Id: homelink-<mac>`
+  (`identity_node_id()`; `identity.c` is unchanged).
+- **The code.** The `claim_code` (`XXXX-XXXX`) is shown:
+  - as the idle caption (`CLAIM CODE K7M2-QX9P`, re-shown every 5 s while idle, since other
+    screens borrow the caption);
+  - in Muse's settings as the server status;
+  - over BLE.
+
+  It is not written to the serial log, as the wire doc asks. The serial log only says that code
+  number N is ready. The `claim_secret` stays in RAM (`vc_claim_t`) and is wiped when the claim
+  ends.
+- **Poll.** `POST <host>/claim/poll` with `X-Claim-Secret` every 3 s.
+  - `202`: keep polling.
+  - `404 claim_not_found` (expired, replaced, wrong secret): start over, no sooner than 5.5 s
+    after the last start, because the backend refuses a restart within 5 s.
+  - `429`: wait for `Retry-After` (at most 900 s).
+  - `503`: wait for `Retry-After`, else back off.
+  - No response or a 5xx: back off 5 s doubling to 60 s.
+  - `401`, `400`, or a `404` on start (wrong URL, or a backend from before task 08): look again
+    in 60 s, with the reason as the caption.
+  - Polling pauses while Muse rests (asleep on battery). A code nobody can see is no use, and the
+    claim simply restarts on wake.
+- **Claimed.** On `200` the credential is written to `muse:node_cred` at once. The write runs on
+  a short-lived helper task with an internal-RAM stack, since the hatch task's stack is in PSRAM
+  and must not touch flash. The caption shows `CLAIMED - <room>`. From then on every `/turn` and
+  every `/audio` GET carries `X-Node-Credential`. If the NVS write fails, the credential is used
+  from RAM until the next reboot, and then the node claims again.
+- **Turns before the claim.** `muse_hatch_ready()` is false until the node is claimed. On the
+  AIPI a press still records the note (the stock held-notes path), and it is sent once the node
+  is claimed.
+- **No refresh.** The deliverable "refresh-on-401 imitated from `app.c:860-935` if the
+  credential model has refresh" resolves to **no refresh**. Task 08's model has no refresh token
+  and the credential doesn't expire. The equivalent of stock's refresh-on-401 is
+  **re-claim on `403 node_unauthorized`**. A `401` means the shared bearer is wrong, which no
+  refresh could fix, so it stays a `TOKEN REFUSED` caption.
+- **BLE.** The node's BLE host (`vesper_ble.c`, started from Link's keeper task on first need,
+  as the stock server was) carries two services:
+  - Muse's phone-setup service, `muse_ble.c` unchanged: `wifi.ssid`/`wifi.pass`/`wifi.connect`,
+    `hatch.*`, the STATUS JSON, passkey pairing with the code on screen;
+  - the Vesper claim service `76657370-6572-4e6f-6465-000000000001`. Its characteristic
+    `…0002` (READ/NOTIFY) holds `{"state":"pending","code":"K7M2-QX9P"}`,
+    `{"state":"starting"}` or `{"state":"claimed","room":"kitchen"}`. It needs no pairing: the
+    code is on the screen anyway and is useless without the claim secret. It never carries the
+    secret or the credential.
+
+  The node advertises as `MuseGadget-XXXXXX` while a claim is in progress or while Muse's BLE
+  setting is on. No Meta pairing, Muse-app setup protocol or Meta endpoint is involved.
+  Cosmetic gap: the kept-identical UI shows the BLE icon from `muse_ble_status()`, which counts
+  only the setting, so during a claim with the setting off the icon stays dark while the node
+  advertises.
+
+### NVS encryption: decision (task 11)
+
+**Decision: NVS stays plaintext on the dev boards. Nothing is burned and flash encryption stays
+off. The credential's protection is per-node revocation, not storage secrecy.**
+
+What was weighed:
+
+- **What the SDK offers.** `CONFIG_HOMEHUB_NVS_ENCRYPTION` (off; `config_store.c:39-45` reads
+  it) selects ESP-IDF's HMAC-based NVS encryption. On first boot it generates an HMAC key into an
+  eFuse key block and read-protects it. The NVS keys are derived from it in hardware.
+- **Irreversibility.** That burn is one-way: the key block and its purpose can never be changed
+  again. The S3 has 6 key blocks, and secure boot and flash encryption want some of them later.
+  A dev board that has been burned to try it is committed to that layout for good.
+- **What it would buy.** Without flash encryption, NVS encryption protects the NVS partition
+  only. The firmware stays readable and rewritable over USB. Without secure boot, anyone with the
+  board can flash a small app that uses the same HMAC peripheral to decrypt NVS. So it protects
+  against a raw flash dump, and against nobody who can run code. A real defence needs secure
+  boot v2, flash encryption in release mode and disabled USB/JTAG download. Each of those is a
+  one-way eFuse step that ends the bench workflow (`board.sh flash`, serial monitor). That
+  belongs with production signing and OTA (task 13), not with a dev board.
+- **Threat model.** The credential is worth little alone. It works only with the shared edge
+  bearer, which sits in the same plaintext NVS (`muse:node_token`), as did every stock
+  credential before (`muse:token`, Link's tokens). It only lets its holder speak as that one node
+  in its room through `/turn` and `/audio`. It can be revoked alone
+  (`vesper-node nodes revoke homelink-<mac>`) without re-keying the fleet. Stealing it needs
+  physical access to the board. A lost or stolen node is handled by revoking it.
+- **Revisit** when the fleet is built for real: enable secure boot v2, flash encryption (release)
+  and `CONFIG_HOMEHUB_NVS_ENCRYPTION` together on fresh production boards, as part of task 13.
+
+### Credentials never logged: evidence (task 11 DoD)
+
+- **Host test, every `make -C firmware test`.** `hatch/test/check_log_hygiene.py` parses every
+  logging call in `hatch/*.c|h` and in every line the patch set adds (`ESP_LOG*`, `printf`,
+  `fprintf`, `puts`, `ets_printf`, `muse_hatch_console`). It fails if one passes an identifier
+  holding:
+  - the credential;
+  - the claim secret;
+  - the bearer;
+  - the `Authorization` buffer;
+  - a header value;
+  - the claim code.
+
+  String literals and presence checks (`token[0] ? …`, `vesper_cred_present()`) are allowed. It
+  checks itself first against known-bad and known-good calls.
+- **Live test.** `make -C firmware live-claim` greps the harness output and the throwaway
+  backend's log for the credential, the claim secret and the token, and for any `vnc_`/`vcs_`
+  shape. It finds none.
+- **By construction.**
+  - The firmware's claim log lines carry only the code's ordinal, HTTP statuses, poll counts,
+    the room and timings.
+  - `>status` reports `"credential":true|false` and the claim state.
+  - The BLE claim characteristic carries only the state, the code and the room.
+  - The secret, the credential and the `Authorization` buffer are wiped after use:
+    `turn_finish`, `claim_post`, `vc_wipe`, and the NVS writer's copy.
 
 ### Speech (task 10, F2)
 
@@ -229,6 +378,35 @@ an empty slot that paced captions over silence (conflict C4). The Vesper backend
   - MP3 buffer hold, flow control and drain, with a stand-in decoder that, like minimp3, needs
     the next header;
   - the caption-length estimate and the TTS Content-Type check.
+
+  And the claim flow's tests (`hatch/test/test_vesper_claim.c`, task 11):
+  - code, secret, credential and room validation, including header injection, the exact
+    backend shapes, length limits and an over-long secret that the JSON decoder cuts and the
+    check then refuses;
+  - the claim and credential headers;
+  - the happy path: start, code on the caption, polls every 3 s, `202`, `200`, the credential
+    taken once, the secret wiped;
+  - every start failure: no response with its 5-60 s backoff, `429` with and without
+    `Retry-After`, `503`, `401`, `400`, `404` from a pre-task-08 backend, and malformed `200`s;
+  - every poll failure: `404` restarts no sooner than the backend's 5 s restart interval,
+    transient errors keep the code, and a malformed `200` restarts;
+  - reclaim on `403 node_unauthorized`, and a config change mid-claim;
+  - 20,000 fuzzed bodies, none of which claims.
+
+  `make test` also runs the log-hygiene check (see *Credentials never logged* above).
+- `make -C firmware live-claim` runs the claim ceremony on the host, through the firmware's own
+  `vesper_claim.c` with libcurl, against a **throwaway** backend (`hatch/test/live_claim.sh`):
+  - It starts `backend/.venv/bin/vesper-node serve` from this checkout on a free loopback port
+    (from 18796, never 8796), with a temp registry (`VESPER_NODE_REGISTRY_FILE` in a 700 temp
+    dir), dummy tokens and both env files pointed at nothing.
+  - The node starts a claim and polls. The script approves the code with
+    `vesper-node claim <code> --room test`, and the poll collects the credential into an NVS
+    stand-in file (mode 600).
+  - A second run, standing in for a reboot, checks the results: `/turn` with the stored
+    credential gets past auth (`422 bad_audio` on a junk note), and so does `/audio`
+    (`404 not_found`). Without the credential, or with a wrong one, the backend answers
+    `403 node_unauthorized`, which the firmware turns into "claim again".
+  - It greps everything for leaked secrets, then kills only the backend it started.
 - `make -C firmware live-turn` runs one real turn against the running node backend
   (`http://[::1]:8796` by default, `VESPER_NODE_URL` to override). It uses the same
   `vesper_proto.c` and libcurl in place of `esp_http_client`:
@@ -237,7 +415,10 @@ an empty slot that paced captions over silence (conflict C4). The Vesper backend
   3. The SSE reply is parsed in 37-byte pieces.
   4. The resolved MP3 URL is fetched with the bearer.
 
-  The token is read from `~/.config/vesper-voice/node.env` at runtime and never printed.
+  The token is read from `~/.config/vesper-voice/node.env` at runtime and never printed. It
+  sends no node credential. Against a task-08 backend, its node id `homelink-hosttest` has to be
+  registered with `--allow-shared-token`, or it gets `403 node_unauthorized`. `live-claim` is
+  the credential path.
 
 ### Simulator
 
@@ -330,6 +511,68 @@ a person can confirm the sound. With the board flashed and provisioned as above 
    with the caption paging along with it.
 4. If it's silent but the log shows `muse reply: X s of audio` with X > 0, check the volume in
    Muse's settings (the speaker plays at `muse_settings_volume()`).
+
+### On-device check (task 11: the claim ceremony, human gate)
+
+The agents don't flash the board or open its serial port. Steps for Kevin (or Vesper):
+
+1. **Run the task-08 backend.** The claim routes and the credential check are task 08's code.
+   Restart `com.vesper.node` from the main checkout so it runs that code:
+
+   ```sh
+   cd ~/builds/muse-charm/muse-charm && git pull && make -C backend install
+   launchctl kickstart -k gui/$(id -u)/com.vesper.node
+   make -C backend check-config            # "node registry: ...", "admin claim route: off"
+   curl -s http://[::1]:8796/healthz       # {"ok": true}
+   ```
+
+   The board must reach it, as in task 09: the socat forward on `:8797`, host
+   `http://<studio-LAN-IPv4>:8797`, until task 12's Peggy handle exists.
+2. **Build and flash** (the agent's tree `~/builds/muse-charm/scratch/sdk-impl-11` is already
+   patched; or apply the patch set to a fresh `b1a3822` worktree):
+
+   ```sh
+   firmware/apply-sdk.sh ~/builds/muse-charm/scratch/sdk-impl-11
+   cd ~/builds/muse-charm/scratch/sdk-impl-11/esp32
+   tools/muse/board.sh build aipi && tools/muse/board.sh flash aipi /dev/cu.usbmodem83201
+   . ~/esp/esp-idf-v6.0.1/export.sh && idf.py -B build-muse-aipi -p /dev/cu.usbmodem83201 monitor | tee /tmp/claim-serial.log
+   ```
+
+   The bench board keeps its Wi-Fi, `hatch.host` and `hatch.token`, and has no `node_cred`, so
+   it boots unclaimed. For a truly fresh board, erase it first (`idf.py -B build-muse-aipi -p
+   /dev/cu.usbmodem83201 erase-flash`) and provision it as in task 09.
+3. **The claim code on the screen.** Expect in the monitor:
+   - `vesper_cred: node credential: none yet (the node will claim)`;
+   - `vesper_ble: BLE host started`, then `advertising as MuseGadget-XXXXXX (claim in progress)`;
+   - `vesper_chat: claim: code 1 ready (HTTP 200 in N ms); shown on the screen and over BLE`.
+
+   The screen shows `CLAIM CODE XXXX-XXXX`, as does Settings > server status. Optional: in a
+   BLE scanner (e.g. nRF Connect), `MuseGadget-XXXXXX` has service `76657370-…-000000000001`.
+   Reading its characteristic gives `{"state":"pending","code":"XXXX-XXXX"}`.
+4. **Approve it** on the Studio, with the code from the screen and the board's room:
+
+   ```sh
+   cd ~/builds/muse-charm/muse-charm/backend && uv run --locked vesper-node claim XXXX-XXXX --room <room>
+   ```
+
+   Within about 3 s the monitor shows
+   `claim: claimed, room <room>; credential saved in NVS`, and the screen
+   `CLAIMED - <room>`. Then `uv run --locked vesper-node nodes list` shows
+   `homelink-c86320 room=<room> access=credential` (the shared-token transition, if it was on,
+   is cleared). `>status` shows `"vesper":{...,"credential":true,"claim":"claimed"}`.
+5. **Reboot** (the reset button, or Ctrl-T Ctrl-R in the monitor). Expect
+   `node credential: stored` and no `claim:` lines.
+6. **A push-to-talk turn.** Hold the talk button, say "what is two plus two", release. Expect:
+   - `turn: HTTP 200` and the spoken reply;
+   - the backend log (`~/Library/Logs/vesper-node/`) to show
+     `turn done: node=homelink-c86320 room=<room> auth=credential ok=True`.
+7. **No secret on serial.** Run `grep -cE 'v(nc|cs)_' /tmp/claim-serial.log`. It should print
+   `0`. The code itself only ever appears on the screen and over BLE, never in the log.
+8. Optional, the refusal path: `vesper-node nodes revoke homelink-c86320`, then press. Expect:
+   - `turn: HTTP 403 node_unauthorized`, then `the node credential was refused; claiming again`;
+   - `NODE NOT CLAIMED`, then a new `CLAIM CODE` on the screen.
+
+   Approve it as in step 4.
 
 ## Decision: the avatar is a patch set tracked in THIS repo (not an SDK fork)
 

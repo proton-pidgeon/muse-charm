@@ -6,9 +6,11 @@
 #
 # Steps:
 #   1. delete the Meta transport (firmware/sdk-patches/delete.txt)
-#   2. apply the patch series (firmware/sdk-patches/*.patch, in order)
+#   2. apply the patch series (firmware/sdk-patches/*.patch, in order; a tree
+#      that already has the whole series is detected as such)
 #   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
-#      the protocol core, the reply-speech helpers) into
+#      the protocol core, the reply-speech helpers, the claim flow, the node
+#      credential store and the BLE host) into
 #      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
