@@ -148,3 +148,9 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Live turn through the launchd instance: STT 0.87 s, /ask 1.06 s, TTS 0.45 s, total 2.39 s; 0 transcript/reply words in service logs.
 - No Deepgram key on the Studio: STT fallback is unit-tested only.
 - Next: task 08 (B2 registry) and 09 (F1 firmware backend) are unblocked; 12 stays human-gated.
+
+## 2026-10-07 ~21:15 CDT — Task 07 GREEN, Wave 3 dispatched
+- Task 07 merged (355aa79 + 2aeeb16): FastAPI backend live under launchd com.vesper.node; wire protocol v1 at docs/node-wire-protocol.md; 101 tests pass; stub-client E2E verified (median 1.45 s turn); 401 auth-before-body verified live; transcripts transient-only enforced. Board issue #5 → Done, closed.
+- Wave 3: task 08 (B2 registry + claim endpoints) → ravenz-node; task 09 (F1 firmware backend) → Studio. Independent (08 needs 07 only; 09 needs 07's protocol only).
+- Credential model default for 08: per-node credential at claim, backend per-route validation; Peggy edge token (task 12) is the outer layer.
+- Remaining: 10 (dep 09), 11 (dep 08+09), 12 (HELD for Kevin), 13 (dep 09+12).
