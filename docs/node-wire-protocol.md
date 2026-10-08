@@ -16,7 +16,7 @@ and no wake word.
 | Open question | Decision | Effect on the protocol / backend |
 |---|---|---|
 | Q1 TTS voice | Reuse the phone brain's ElevenLabs voice: `VESPER_PHONE_TTS_VOICE_ID`, model `eleven_flash_v2_5`, `phone_tts.py` discipline. No new voice. | `message_done.audio_url` is an MP3 in that voice. |
-| Q4 transcripts | **Transient only.** The backend never logs or persists transcripts or reply text. **Amended 2026-10-08 (task 16, Kevin's request):** the backend keeps a per-node conversation memory on the Studio (last 15 exchanges + a session summary, `VESPER_NODE_MEMORY_FILE`, mode 600) so follow-ups work. It is still never logged. | Logs carry lengths, latencies, provider, status codes only. Tests enforce this. MP3s live in memory only, with a TTL. |
+| Q4 transcripts | **Transient only.** The backend never logs or persists transcripts or reply text. **Amended 2026-10-08 (task 16, Kevin's request):** the backend keeps a per-node conversation memory on the Studio (last 15 exchanges + a session summary, `VESPER_NODE_MEMORY_FILE`, mode 600) so follow-ups work. It is still never logged. **Amended 2026-10-08 (task 17, Kevin's approval of Part 4):** after a turn, a significant single exchange ("remember that …") may be appended, trimmed and capped, to the long-term memory candidate queue `~/memory/node-candidates.jsonl` (`VESPER_NODE_CANDIDATES_FILE`, mode 600) for Vesper to review. Never logged, never audio. | Logs carry lengths, latencies, provider, status codes only. Tests enforce this. MP3s live in memory only, with a TTL. |
 | Q6 LiveKit spike | No spike. Build the HTTP shim. | This doc. |
 | PTT vs wake word | PTT for v1. | Whole-note upload, below. |
 
@@ -434,6 +434,17 @@ That is exactly the pre-task-08 status quo, limited to one node id.
   the next turn. A malformed or group-readable file is ignored (logged by name) and replaced
   on the next write.
 
+## Operator: memory candidates (task 17)
+
+- **File:** `~/memory/node-candidates.jsonl` (override with `VESPER_NODE_CANDIDATES_FILE`),
+  append-only from the backend, mode 600 (tightened if looser), parent created 700 only if
+  missing. One JSON line per candidate; schema and the review contract are in
+  `docs/node-memory-integration.md`. It never leaves the Studio.
+- The backend never reads curated memory and never calls the brain for this; a failed append
+  is logged by label (`memory candidate not staged: … reason=…`) and never affects a turn.
+- **Wipe/rotate:** take an exclusive `flock` on the file, rename or truncate it, release; the
+  backend follows a rename on its next append. No service restart is needed.
+
 ## Firmware updates (task 13)
 
 The fleet runs one firmware: every node's image is identical, and only its NVS identity
@@ -648,3 +659,5 @@ of this changes the wire shape, so the version stays 1.
 - **v1, conversation memory (2026-10-08, task 16):** Q4 amended (per-node conversation memory
   on the Studio), history + session summary in the `/ask` text, voice room assignment. No wire
   change: the node sees the same events, so the version stays 1.
+- **v1, memory candidates (2026-10-08, task 17):** Q4 amended again (single-exchange memory
+  candidates staged after the turn). No wire change, so the version stays 1.
