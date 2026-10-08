@@ -12,7 +12,7 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11) and the firmware update check (task 13), installed as `<SDK>/esp32/components/muse/vesper/` |
 | `hatch/VERSION` | The firmware version (`MAJOR.MINOR.PATCH`) the build stamps into the image (task 13); bump it for every release |
 | `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers and the update check, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
-| `avatar/` | The Vesper owl avatar (task 04) |
+| `avatar/` | The Vesper "Iconic" cyborg-face avatar (task 14; it replaced task 04's owl, now retired) |
 | `Makefile` | `make -C firmware test`, `live-turn`, `live-claim` and `live-ota` (host only, no ESP-IDF) |
 
 ## Decision (task 09): a patch set tracked in THIS repo, not an SDK fork
@@ -77,7 +77,8 @@ The image was 1,839,104 bytes after task 09, down from 2,166,784 for the avatar-
 build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,712 bytes
 (`0x1f1000`, 51% of the app partition free). Task 13's update check keeps it at 2,035,712
 bytes signed (2,031,616 unsigned; the signed image is padded to the signature block), so an
-update always fits the other 4 MiB slot.
+update always fits the other 4 MiB slot. Task 14's avatar swap (owl to Iconic face) leaves it
+at 2,035,712 bytes.
 
 **Kept byte-identical:**
 
@@ -794,47 +795,77 @@ not exercise Vesper's renderer; the avatar is covered by `make_gifs.py` (host re
 mode) and by the ASan/UBSan bench run below. Making the simulator use it would mean editing a
 tracked SDK file, which this task does not do.
 
-## The avatar: Vesper, the evening-star owl
+## The avatar: Vesper, "Iconic" (task 14)
 
-Original 64x64 palette-indexed art (31 palette entries, Bayer-dithered shading, 1 px outline).
-A plump indigo owl with a pale moon face disc, ear tufts, big dark glinting eyes, small gold beak
-and feet, and the evening star (a four-point sparkle) on its forehead. The star, aura, sparkles
-and UI accent take the mode colour: gold at idle (a deliberate deviation from the SDK's violet
-default), cyan listening, magenta thinking, mint speaking, red error, white/blue boot, dusk
-violet off.
+The default avatar of every Vesper firmware build. It replaced task 04's evening-star owl on
+2026-10-08 (Kevin's pick of the "Iconic" direction from three sketches); the owl renderer is
+retired and lives on only in git history (`firmware/avatar/muse_pixel.c` before task 14).
+
+Original 64x64 palette-indexed art, 32 palette entries, procedural (polygons and rules, no
+bitmaps), flat shading with hard edges. A severe, front-facing cyborg woman: silver-gray hair cut
+into angular swept planes with a hard part, a cool gray face with planar cheek and jaw shadows,
+one natural blue eye under a straight heavy brow, a flat-line mouth. The focal point is the other
+eye: a large square cybernetic eye (13x13 cells, concentric square rings in a metal housing with
+gold contact pins) set into a metal plate on that temple, with circuit traces on the plate and one
+running down the cheek. Dark navy collar with gold piping and clasps, solid black background.
+Deliberately not cute: no round eyes, no blush, no smile.
+
+The eye's rings and halo and the circuit traces take the mode colour, the same scheme the owl
+used: gold at idle (a deliberate deviation from the SDK's violet default), cyan listening,
+magenta thinking, mint speaking, red error, white/blue boot, dusk violet off.
 
 | Mode | Behaviour |
 |---|---|
-| BOOT | pops up from a squash, eyes open at 0.9 s, star ignites at 1.1 s, sparkles appear one by one |
-| IDLE | slow bob, wings sway, random ear flicks, blinks (with double blinks), wandering gaze, pulsing star |
-| LISTENING | ears perked, wide eyes, small open beak, raised brows, wings raised like cupped ears, expanding rings and sound arcs, star pulses with `level` |
-| THINKING | eyes glance up and side to side, "hmm" beak, one wing folded to the chin, lean, one ear up, stepping thought dots, fast star flicker |
-| SPEAKING | beak opens with `level` (plus flutter), body bobs with the voice, wings gesture, feet shuffle, rings and arcs, star flares with `level` |
-| ERROR | X eyes, flat beak, 0.6 s shake, drooping ears, "!" mark, red scheme, star flickers (`happy` ignored) |
-| OFF | right wing waves goodbye, eyes close, ears droop, glow fades over 1.3 s |
-| happy overlay | hop, wings up and wiggling, `^^` eyes, open grin, ears up, big star, two hearts rising |
+| BOOT | a hard scan line draws the face top to bottom (0.2-0.9 s); the eye ignites ring by ring from the core (0.8-1.4 s) and flashes once as it locks on; the natural eye opens at 1.0 s; the traces light downward |
+| IDLE | slow glow pulse in the eye, slow deliberate blinks, the natural eye occasionally shifts its gaze one cell |
+| LISTENING | eye at full brightness, a white scan line sweeps it top to bottom, the core widens with `level`; gaze locked |
+| THINKING | the rings step inward, two pulses run along every trace |
+| SPEAKING | the mouth parts into a narrow slit with `level` (never a round "o"), the eye core and the traces flare with `level` |
+| ERROR | red; the eye's rows glitch sideways for 0.6 s and briefly every ~1.4 s after; the eye flickers (`happy` ignored) |
+| OFF | the eye collapses ring by ring to its core and goes dark over 1.1-1.3 s; the natural eye closes at 0.6 s |
+| happy overlay | an acknowledge flare: the eye goes white-hot, a square pulse expands off it across the face, a pulse runs the traces, the natural eye narrows slightly |
 
 Previews: `firmware/avatar/gifs/*.gif` (192 px, one per mode plus `happy`), generated with
 `python3 tools/muse/make_gifs.py` in the SDK and shrunk by `firmware/avatar/shrink_gifs.py`.
 
+On the device (`firmware/avatar/device-snaps/`, task 05's method: `MUSE_BENCH=1` build,
+`tools/muse/snap.py PORT '>face=<mode>'`): the AIPI's canvas is 96 px, so the 64x64 grid is shown at
+1.5x, not 2x. The art was drawn and checked at 96 px; the bottom of the collar sits under the
+caption bar.
+
+On the board (task 14, 2026-10-08): `firmware/apply-sdk.sh ~/builds/muse-charm/scratch/sdk-impl-13-fresh`
+(only the avatar changed; the tree was otherwise main's firmware), `tools/muse/board.sh build aipi`
+(log: `Custom avatar: components/muse/avatar/muse_pixel.c`, image 2,035,712 bytes, version still
+`1.0.0`) and `board.sh flash aipi`. It boots clean (`UI up: 128x128, 96 px Muse`, Wi-Fi up,
+`OTA image validated`, no panic). The bench build used for the snaps lives in
+`build-muse-aipi-bench/` of the same tree.
+
 ## Render time vs the 10 ms S3 budget
 
 `firmware/avatar/bench.c` times `muse_pixel_render()` plus a full 128x128 `muse_pixel_scale()` per
-frame, for every mode with and without the happy overlay (1950 frames each, `cc -O2`):
+frame, for every mode with and without the happy overlay (1950 frames each, `cc -O2`), plus the
+one-time first frame:
 
-    cc -O2 -I <SDK>/esp32/components/muse firmware/avatar/bench.c firmware/avatar/muse_pixel.c -lm -o /tmp/vesper_bench && /tmp/vesper_bench
+    cc -std=c11 -Wall -Wextra -Werror -O2 -I <SDK>/esp32/components/muse firmware/avatar/bench.c firmware/avatar/muse_pixel.c -lm -o /tmp/vesper_bench && /tmp/vesper_bench
 
-Host (Apple M4 Max, arm64, -O2): render mean 11-15 us (max seen 53 us), scale128 mean ~3 us;
-worst single frame render+scale 48 us. The same code builds clean with
-`-Wall -Wextra -Werror` and runs clean under AddressSanitizer + UBSan.
+The Iconic face does not move as a whole, so everything static (hair, face, plate, housing,
+collar, outline) is rasterised once, on the first frame, into a 4 KiB base plane. Every later
+frame is a `memcpy` of that plane plus a few hundred animated cells (the eye's 9x9 rings and
+halo, three traces of up to 48 cells, the natural eye, the mouth, the overlays).
 
-S3 estimate (240 MHz Xtensa LX7, 1 single-precision FPU, no sqrt/sin hardware): the M4 is roughly
-150-250x faster per core on this kind of scalar integer code (about 4.5 GHz at ~6 IPC vs 240 MHz at
-~0.7-1 IPC). That puts render at about 2-4 ms and a full scale at about 0.5-1 ms: roughly
-3-5 ms per frame, comfortably under 10 ms even with a 2x safety margin for internal-RAM cache
-misses. Per-pixel work is Q12 integer inside the body, wing, face and aura bounding boxes; floats
-are used per frame or per part only: about 70 sqrtf (one per body row), a few dozen
-sinf/cosf/expf, and the tiny eye/blush/foot ellipses (a few tens of pixels). On the S3's FPU these
-are a few thousand cycles in total (under 0.3 ms), so there is no float/libm hot spot. No
-allocation; static RAM is about 8 KiB of planes plus palettes and a 512-byte map. This is a host
-proxy, not a measurement; confirm on hardware in task 05 if desired.
+Host (Apple M4 Max, arm64, -O2), task 14: render mean 0.4-1.1 us (max seen 23 us, scheduler
+noise), scale128 mean ~3 us; the first frame (scanline polygon fill of the base) 35 us warm,
+110 us cold. The same code builds clean with
+`-std=c11 -Wall -Wextra -Werror -Wshadow -Wpointer-arith -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes`
+and runs clean under AddressSanitizer + UBSan (including `float-cast-overflow`), also with hostile
+poses: NULL, NaN/inf/huge `t`/`mode_t`/`level`/`happy`, out-of-range modes, and out-of-range
+`set_size`/`scale` arguments.
+
+S3 estimate (240 MHz Xtensa LX7, 1 single-precision FPU): the M4 is roughly 150-250x faster per
+core on this kind of scalar integer code. That puts a frame's render at well under 0.3 ms and a
+full scale at about 0.5-1 ms: about 1 ms per frame against the 10 ms budget (the owl was 3-5 ms).
+The one-time first frame is about 5-25 ms, once per boot, during the boot animation. Per-pixel
+work is integer (Q12 for glow levels and dither thresholds); floats are used per frame only (a few
+sinf/expf/fmodf and the palette blend). No allocation; static RAM is 12 KiB of planes (frame, base,
+region map) plus palettes, a 512-byte map and ~300 bytes of trace paths. This is a host proxy, not
+a measurement on the S3.

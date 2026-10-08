@@ -27,6 +27,13 @@ int main(void)
 {
     static const char *const NAMES[MUSE_MODE_COUNT] = { "boot", "idle", "listening", "thinking", "speaking", "error", "off" };
     muse_pixel_set_size(SIZE);
+    {
+        /* The first frame also rasterises the static face (once per boot). */
+        muse_pose_t p = { .mode = MUSE_MODE_BOOT, .t = 0.04f, .mode_t = 0 };
+        double a = now_us();
+        muse_pixel_render(&p);
+        printf("first frame (builds the static base once): %.1f us\n", now_us() - a);
+    }
     double worst_total = 0;
     for (int m = 0; m < MUSE_MODE_COUNT; m++) {
         for (int pet = 0; pet < 2; pet++) {
