@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Vesper node backend (task 07 / B1: POST /turn -> STT -> brain /ask -> TTS) - user LaunchAgent.
+  Template: __LABEL__ / __BACKEND_DIR__ / __HOME__ / __PORT__ are rendered by
+  scripts/install-launchd.sh. NO KEYS OR TOKENS HERE: the service reads VESPER_NODE_TOKEN from
+  VESPER_NODE_ENV_FILE and the provider/brain keys from VESPER_VOICE_ENV_FILE (both mode 600).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>__LABEL__</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BACKEND_DIR__/.venv/bin/vesper-node</string>
+        <string>serve</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>__BACKEND_DIR__</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+        <key>VESPER_NODE_ENV_FILE</key>
+        <string>__HOME__/.config/vesper-voice/node.env</string>
+        <key>VESPER_VOICE_ENV_FILE</key>
+        <string>__HOME__/.config/vesper-voice/env</string>
+        <key>VESPER_NODE_PORT</key>
+        <string>__PORT__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/vesper-node/__LABEL__.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/vesper-node/__LABEL__.err.log</string>
+</dict>
+</plist>

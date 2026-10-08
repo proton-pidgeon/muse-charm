@@ -11,8 +11,8 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 03 | [AiPi Lite bring-up prep](03-aipi-lite-bringup-prep.md) | done | – |
 | 04 | [A1 — Vesper pixel avatar](04-vesper-pixel-avatar.md) | done | – |
 | 05 | [A2 — Avatar on-device validation](05-avatar-on-device-validation.md) | flashed + framebuffer-verified; blocked on Kevin: re-pair + eyes-on | 04 |
-| 06 | [B3 — `channel="node"` variant in vesper-voice](06-node-channel-variant.md) | not started | – |
-| 07 | [B1 — Node backend service](07-node-backend-service.md) | not started | 06 |
+| 06 | [B3 — `channel="node"` variant in vesper-voice](06-node-channel-variant.md) | done (vesper-voice 212a79f) | – |
+| 07 | [B1 — Node backend service](07-node-backend-service.md) | in progress (impl/07) | 06 |
 | 08 | [B2 — Node registry + credentials](08-node-registry.md) | not started | 07 |
 | 09 | [F1 — SDK fork + third `muse_hatch_*` backend](09-firmware-hatch-backend.md) | not started | 07 |
 | 10 | [F2 — TTS playback slot](10-firmware-tts-playback.md) | not started | 09 |
