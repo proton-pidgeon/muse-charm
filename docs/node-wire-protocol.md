@@ -38,7 +38,9 @@ backend serves it as `/turn` because Peggy strips the prefix. Peggy must not rou
 
 Backend default bind: `VESPER_NODE_HOST=::`, `VESPER_NODE_PORT=8796`. `::` listens on every
 interface: the 6PN address `fdaa:3e:60bd:a7b:9016:9c37:ac65:d902` (for the Peggy handle) and
-loopback (for the stub client and health checks). Set `VESPER_NODE_HOST` to the 6PN address
+IPv6 loopback `[::1]` (for the stub client and health checks). On the Studio a `::` bind is
+IPv6-only, so `127.0.0.1` is **not** served. The live brain behaves the same way: its
+`VESPER_BRAIN_URL` is `http://[::1]:8795`. Set `VESPER_NODE_HOST` to the 6PN address
 to restrict it to 6PN only. Loopback health checks then stop working.
 
 ## Authentication
