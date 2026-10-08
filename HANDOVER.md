@@ -193,3 +193,35 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - **HUMAN GATE (on-device DoD):** the board stays on Meta firmware until Kevin is ready. The exact steps are in `tasks/09-firmware-hatch-backend.md` and `firmware/README.md`: reach the backend, build, flash, provision over serial, run one PTT turn.
   - Before task 12 the board can't reach the IPv6-only `::` bind over IPv4 LAN. Use a temporary `socat TCP4-LISTEN:8797,fork TCP6:[::1]:8796` on the Studio, or wait for Peggy `/vesper-node`.
 - SDK copies: `~/builds/muse-charm/scratch/sdk-impl-09` (the working copy) and `~/builds/muse-charm/scratch/sdk-impl-09-fresh` (the from-scratch proof, built). Both are detached worktrees of the untouched clone and can be removed with `git -C ~/builds/muse-charm/scratch/muse-gadget-sdk worktree remove --force <path>`.
+
+## 2026-10-07 ~21:55 CDT — Task 09 host-GREEN, flashing decision made, task 10 dispatched
+- Task 09 merged (31eedcc, main @ 8f04e54): patch-set pattern (firmware/apply-sdk.sh + firmware/hatch/), Meta transport deleted, voice.c 0-diff, 282/282 firmware tests, live host turn vs backend works (captions + MP3 URL). On-device flash held by implementer for a human gate.
+- DECISION (coordinator): flash now. The Meta re-pair for task 05 is superseded — Vesper firmware replaces Meta pairing with the claim flow; re-pairing would be immediately wiped. Issue #3 closed as Done with the record. Stock backup exists.
+- Task 10 (F2 TTS) dispatched to Studio: flash Vesper firmware first, verify 09's on-device box (PTT → captions, then close issue #7), then wire TTS playback. Noted: backend binds IPv6-only (fix to dual-stack or socat stopgap for the board).
+- Task 08 rerouted to Studio after task 10 (ravenz-node auth dead). Then 11. Task 12 HELD (Kevin deploy approval). Task 13 blocked on 12.
+
+## 2026-10-07 ~22:25 CDT — Task 10 coordinator: Vesper firmware flashed, 09 on-device verification BLOCKED on Wi-Fi password
+- NOTE: the ~21:55 entry above said "task 10 dispatched" — that dispatch never happened (no /implement was running). This entry is the true state.
+- Patch set re-verified current: firmware/apply-sdk.sh on ~/builds/muse-charm/scratch/sdk-integ-09 (detached b1a3822 worktree) -> all 3 patches already applied, esp32/main/voice.c byte-identical to b1a3822.
+- Build: tools/muse/board.sh build aipi in sdk-integ-09/esp32 -> clean, BUILD_EXIT=0, build-muse-aipi/muse-gadget.bin 2026-10-07 21:54.
+- Flash: board.sh flash aipi /dev/cu.usbmodem83201 -> "Hash of data verified". Board booted Vesper firmware (serial: link.heartbeat status=no_wifi; console answers ">" commands).
+- Network: com.vesper.node binds IPv6-only (tcp6 *.8796). socat stopgap RUNNING on the Studio: socat 'TCP4-LISTEN:8797,fork,reuseaddr' 'TCP6:[::1]:8796' -> board URL http://192.168.5.16:8797 verified 401 (reachable). Dual-stack bind fix still open for task 10's implementer (preferred); stopgap is temporary.
+- Board: issue #8 (task 10) set to In Progress / "Wiring TTS playback slot" on project #11.
+- BLOCKED: Wi-Fi provisioning. security(1) read of the System keychain returns rc=36 (needs GUI approval; 60 AirPort entries exist but are unreadable headless). Login keychain has no Wi-Fi passwords; no 1Password CLI. Need Kevin to supply the Wi-Fi password (Westview assumed; Studio on 192.168.5.16/22, gw 192.168.4.1) for transient provisioning use only.
+- Ready to resume: /tmp/provision_ptt.py on the Studio (run with the IDF python ~/.espressif/python_env/idf6.0_py3.14_env/bin/python) does provision + one PTT turn (serial d/u PTT + say "what is two plus two" into the mic). Serial log: /tmp/ptt-run.log (mgst_ redacted, secrets never printed).
+- After 09's box lands (PTT -> note reaches backend -> reply captions): close issue #7 as Done, then dispatch: claude -p "/implement tasks/10-firmware-tts-playback.md" --dangerously-skip-permissions in /Users/k3v/builds/muse-charm/muse-charm on the Studio.
+
+## 2026-10-07 ~22:05 CDT — Task 10 blocked on Wi-Fi provisioning (human gate)
+- Vesper firmware flashed and booted (task 09 build verified). Board shows status=no_wifi.
+- NVS has no Wi-Fi credentials (Meta-era creds gone with the transport swap; Vesper firmware uses fresh provisioning).
+- Wi-Fi password unobtainable headlessly: System keychain needs GUI approval (rc=36), login keychain empty, no 1Password CLI. Old NVS creds confirmed absent (wifi.connect → 'send wifi.ssid first').
+- Prepared /tmp/provision_interactive.py: prompts for SSID + password in the Studio terminal (getpass, no echo), provisions over serial, runs PTT turn. Password never touches chat/logs.
+- Socat stopgap live (IPv4 8797 → IPv6 ::1:8796); backend reachable.
+- HUMAN GATE: Kevin runs ~/.espressif/python_env/idf6.0_py3.14_env/bin/python /tmp/provision_interactive.py on the Studio terminal, types SSID + password. Then task 10's /implement can be dispatched.
+## 2026-10-08 ~09:37 CDT — Wi-Fi human gate SATISFIED (provisioner FATAL was a false alarm)
+- Kevin ran /tmp/provision_interactive.py: `wifi.ssid=Westview -> ok`, `wifi.pass -> ok`, then FATAL timeout waiting for `wifi.connect -> ok` — FALSE ALARM (confirmation-parsing miss in the script). SSID/password were correct and saved to NVS. Do NOT ask Kevin to re-run the provisioner.
+- Verified live over serial: `status=wifi_connected`, SSID Westview, board IP 192.168.4.85.
+- NOTE: the provisioner died at wifi.connect, BEFORE setting hatch.host/hatch.token. The task-10 implementer must provision `>hatch.host=` and `>hatch.token=` over the serial console from ~/.config/vesper-voice/node.env (mode 600). Never print the token; status words only.
+- Live infra: com.vesper.node on tcp6 *:8796 (launchd); socat stopgap TCP4-LISTEN:8797 -> TCP6:[::1]:8796 alive (board reaches backend at http://192.168.5.16:8797). Dual-stack bind fix still preferred over the stopgap.
+- Backup provisioner: ~/builds/muse-charm/provision_interactive.py (survives /tmp clears).
+- Task 10 UNBLOCKED. DoD: a PTT turn on the real board returns SPOKEN audio from the speaker — captions alone do not pass (stock firmware did captions; the Vesper firmware fills the TTS slot).
