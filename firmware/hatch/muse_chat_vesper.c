@@ -64,8 +64,14 @@
  * this task plays itself (muse_audio_write), since the voice task only plays
  * during a turn; its caption is set while Muse stays IDLE. A talk press
  * always wins: it changes Muse's mode (and starts a turn, which ends the
- * announcement), the playback stops within one 20 ms chunk, and whatever was
- * left is dropped: the server hands each announcement out only once. No
+ * announcement) and the playback stops within one 20 ms chunk. The server
+ * hands each announcement out only once, so what a press cuts off is not
+ * thrown away: the ones not started yet (and a whole list fetched while the
+ * press landed) stay pending (s_ann_pending) and are said at the next idle
+ * moment without a new GET; only the one that was mid-speech is dropped. The
+ * GET itself is the one window a press can't cut: it is bounded by a 2 s
+ * connect timeout (an unreachable server) and an 8 s response timeout (a
+ * slow but answering backend, which itself caps the poll at ~5 s). No
  * voice-task event is emitted for an announcement, and its text is never
  * logged.
  *
@@ -144,7 +150,8 @@ static const char *TAG = "vesper_chat";
 
 /* Announcements (task 18) */
 #define ANN_OUT_BYTES (MIC_RATE * 2)       /* 1 s of decoded announcement audio, played by this task */
-#define ANN_TIMEOUT_MS 5000                /* the poll: connect + response */
+#define ANN_CONNECT_TIMEOUT_MS 2000        /* DNS + TCP + TLS: an unreachable server holds a press up at most this long */
+#define ANN_RESPONSE_TIMEOUT_MS 8000       /* then the headers and each body read: the backend's claim (3 s) + TTS (2 s) + Peggy */
 #define ANN_PLAY_CHUNKS 5                  /* 20 ms chunks written per pass (a press is seen within one) */
 #define ANN_GAP_CHUNKS 25                  /* 500 ms of silence between announcements (also flushes the DMA) */
 #define ANN_HOLD_CHUNKS (TEXT_HOLD_S * 50) /* after the last one: its caption stays up over silence */
@@ -277,6 +284,7 @@ EXT_RAM_BSS_ATTR static char s_ann_body[VN_BODY_MAX];
 static uint32_t s_ann_played;        /* frames of s_ann_out played (the caption's clock) */
 static uint32_t s_ann_quiet;         /* silence chunks written since the last real audio */
 static vn_verdict_t s_ann_last = VN_OK;
+static bool s_ann_pending;           /* s_ann holds announcements fetched (so already handed out) but not said yet */
 EXT_RAM_BSS_ATTR static char s_ann_shown[MUSE_CAPTION_MAX];   /* the caption announce_play last put up */
 
 static int64_t now_us(void)
@@ -417,7 +425,20 @@ static void turn_finish(void)
     memset(s_turn.auth, 0, sizeof(s_turn.auth));
     memset(s_turn.cred, 0, sizeof(s_turn.cred));
     if (s_turn.announce) {
-        /* Whatever wasn't said is dropped (the server hands an announcement out once). */
+        /* The server hands an announcement out once. Ended early (a press, a speaker failure):
+         * the ones not started yet wait for the next idle moment; the one that was mid-speech is
+         * dropped (never repeated, never talked over Kevin). A finished list has none queued. */
+        int first_queued = s_turn.nmsgs;
+        for (int i = 0; i < s_turn.nmsgs; i++) {
+            if (s_turn.msgs[i].tts == TTS_QUEUED) {
+                first_queued = i;
+                break;
+            }
+        }
+        s_ann_pending = vn_keep_from(&s_ann, first_queued) > 0;
+        if (s_ann_pending) {
+            ESP_LOGI(TAG, "announcements: %d not started yet; kept for the next idle moment", s_ann.n);
+        }
         s_turn.announce = false;
         s_sink = s_out;
         xStreamBufferReset(s_ann_out);
@@ -1615,7 +1636,7 @@ static int ann_get(const char *url, size_t *len, claim_resp_t *resp)
     esp_http_client_config_t cfg = {
         .url = url,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = ANN_TIMEOUT_MS,
+        .timeout_ms = ANN_CONNECT_TIMEOUT_MS,   /* the response gets its own, longer one once connected (as /turn) */
         .event_handler = on_claim_http_event,  /* Retry-After, for a 429 */
         .user_data = resp,
         .buffer_size = 1024,
@@ -1633,7 +1654,15 @@ static int ann_get(const char *url, size_t *len, claim_resp_t *resp)
     esp_http_client_set_header(c, s_turn.hdrs[VP_TURN_HEADERS].name, s_turn.hdrs[VP_TURN_HEADERS].value);
     esp_http_client_set_header(c, "Accept", "application/json");
     int status = 0;
-    if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0) {
+    if (esp_http_client_open(c, 0) == ESP_OK) {
+        /* Connected: the backend claims from the brain (3 s) and mints speech (2 s) before it
+         * answers, so wait for that, but not for ever: this task can't see a press meanwhile. */
+        esp_http_client_set_timeout_ms(c, ANN_RESPONSE_TIMEOUT_MS);
+    } else {
+        esp_http_client_cleanup(c);
+        return 0;
+    }
+    if (esp_http_client_fetch_headers(c) >= 0) {
         status = esp_http_client_get_status_code(c);
         while (*len < VN_BODY_MAX) {
             int n = esp_http_client_read(c, s_ann_body + *len, (int)(VN_BODY_MAX - *len));
@@ -1671,9 +1700,9 @@ static void announce_start(void)
     s_ann_shown[0] = '\0';
     s_ann_quiet = ANN_GAP_CHUNKS;   /* nothing is playing: the first one starts at once */
     s_turn.phase = P_PACE;
+    s_ann_pending = false;   /* s_ann stays as it is: turn_finish keeps what a press leaves unstarted */
     ESP_LOGI(TAG, "announcements: %d to say (%d with speech, %u dropped, %u speech refused)", s_ann.n, speech,
              s_ann.dropped, s_ann.audio_refused);
-    memset(&s_ann, 0, sizeof(s_ann));   /* the texts live in the messages now */
     if (muse_state_asleep()) {
         muse_state_set_asleep(false);   /* on USB power (asleep on battery, nothing is polled): show it */
     } else {
@@ -1681,21 +1710,43 @@ static void announce_start(void)
     }
 }
 
-/* One poll, if one is due and the node is idle, claimed and online. */
+/* The server changed or the node was unclaimed: what was fetched from it is no longer ours to say. */
+static void announce_drop_pending(const char *why)
+{
+    if (s_ann_pending) {
+        ESP_LOGI(TAG, "announcements: %d pending dropped (%s)", s_ann.n, why);
+    }
+    s_ann_pending = false;
+    memset(&s_ann, 0, sizeof(s_ann));
+}
+
+/* One poll, if one is due and the node is idle, claimed and online; or, first, what an earlier poll left pending. */
 static void announce_step(void)
 {
     if (s_turn.phase != P_IDLE || s_turn.announce || !s_ann_out || atomic_load(&s_ota_installing)) {
         return;
     }
     int64_t now = now_us() / 1000;
-    if (!vn_sched_due(&s_ann_sched, now) || !atomic_load(&s_claimed) || !vesper_cred_present() ||
-        !muse_hatch_configured() || !muse_wifi_connected() || muse_state_mode(NULL) != MUSE_MODE_IDLE) {
-        return;   /* stays due until the node is idle, claimed and online */
+    if ((!s_ann_pending && !vn_sched_due(&s_ann_sched, now)) || !atomic_load(&s_claimed) ||
+        !vesper_cred_present() || !muse_hatch_configured() || !muse_wifi_connected() ||
+        muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+        return;   /* stays due (or pending) until the node is idle, claimed and online */
     }
     if (uxQueueMessagesWaiting(s_cmds)) {
         return;   /* a press (or a setting) goes first */
     }
     turn_reset(atomic_load(&s_gen));
+    if (s_ann_pending) {
+        /* Fetched earlier and deferred by a press: the server already handed them out, so say
+         * them now, with no new GET (the poll schedule is untouched). Their MP3s may have
+         * expired meanwhile (10 min TTL): those are paced over silence, as a refused one. */
+        if (!load_config(true)) {
+            announce_drop_pending("server, token or credential unusable");
+            return;
+        }
+        announce_start();
+        return;
+    }
     char url[VP_URL_MAX];
     claim_resp_t resp = { 0 };
     size_t len = 0;
@@ -1733,10 +1784,12 @@ static void announce_step(void)
         return;
     }
     if (uxQueueMessagesWaiting(s_cmds) || muse_state_mode(NULL) != MUSE_MODE_IDLE) {
-        ESP_LOGI(TAG, "announcements: %d dropped: a press came first", s_ann.n);
+        /* A press came during the GET. The server has already handed these out, so they are
+         * not dropped: they are said at the next idle moment, without another GET. */
+        ESP_LOGI(TAG, "announcements: %d kept for after the press", s_ann.n);
         memset(s_turn.auth, 0, sizeof(s_turn.auth));
         memset(s_turn.cred, 0, sizeof(s_turn.cred));
-        memset(&s_ann, 0, sizeof(s_ann));
+        s_ann_pending = true;
         return;
     }
     announce_start();   /* keeps the headers: the MP3 GETs need them; turn_finish wipes them */
@@ -1801,12 +1854,14 @@ static void handle(const cmd_t *cmd)
         if (s_turn.phase != P_IDLE) {
             turn_fail("SETTINGS CHANGED");
         }
+        announce_drop_pending("settings changed");   /* after turn_fail: it may have just kept some */
         vc_config_changed(&s_claim, now_us() / 1000);   /* a claim in progress starts over on the new server */
         break;
     case CMD_UNCLAIM:
         if (s_turn.phase != P_IDLE) {
             turn_fail("SETTINGS CHANGED");
         }
+        announce_drop_pending("unclaimed");
         unclaim();
         break;
     case CMD_BEGIN:

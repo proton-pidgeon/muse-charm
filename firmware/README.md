@@ -787,11 +787,15 @@ node when they fall due. The node asks for them (`docs/node-wire-protocol.md`,
 - **When:** every 15 s while the node is idle: claimed and online, no turn, claim request or
   update install in progress, nothing being said, Muse in `IDLE` mode, not resting. The first
   poll is 15 s after boot. Errors back off 15 s → 30 s → 60 s; a `429` waits at least its
-  `Retry-After`; a `403 node_unauthorized` claims again, as on `/turn`. Polling pauses while
+  `Retry-After`; a `403 node_unauthorized` claims again, as on `/turn`. Announcements left
+  pending by a press (below) are said before any new poll. Polling pauses while
   Muse rests (asleep on battery), so announcements due then are said on waking (the brain
   drops anything more than 6 hours overdue).
 - **Request:** the turn's headers (bearer, `X-Node-Id`, `X-Vesper-Node-Protocol`,
-  `X-Node-Credential`) plus `Accept: application/json`, 5 s timeout, no redirects.
+  `X-Node-Credential`) plus `Accept: application/json`, no redirects. Timeouts are split as on
+  `/turn`: 2 s to connect (DNS + TCP + TLS), then 8 s for the response (the backend claims from
+  the brain in up to 3 s and mints speech in up to 2 s before it answers, so a slow but
+  answering backend is waited for; past that the poll is a failure and backs off).
 - **Parsing:** `hatch/vesper_announce.c`, pure C like `vesper_proto.c` and host-tested
   (`hatch/test/test_vesper_announce.c`): the whole body must be one JSON object under 8 KiB with
   an `announcements` array; only its first 5 entries count; an entry without a non-empty string
@@ -808,14 +812,26 @@ node when they fall due. The node asks for them (`docs/node-wire-protocol.md`,
   woken if it was asleep on USB power. No voice-task event is emitted, and the text is never
   logged (the log has counts only).
 - **A talk press always wins:** a press puts Muse in `LISTENING` at once, and the hatch task
-  checks that before every 20 ms chunk, stops, and drops whatever was left; the press's
-  `CMD_BEGIN` would end it anyway. A poll is skipped while a command is queued, and its result
-  dropped if a press came during the GET. The backend hands each announcement out only once, so
-  a dropped one is gone (a deliberate trade: never repeat an alarm, never talk over Kevin).
+  checks that before every 20 ms chunk and stops; the press's `CMD_BEGIN` would end it anyway.
+  A poll is skipped while a command is queued. The one window a press can't cut is the GET
+  itself (the hatch task is inside `esp_http_client` then, and `CMD_BEGIN` waits in its queue):
+  honestly, that is **up to ~2 s when the server is unreachable** (the connect timeout) and
+  **up to ~8 s after connecting if the backend is slow to answer** (the response timeout; the
+  backend itself caps the poll at ~5 s: 3 s claim + 2 s speech, so ~5–6 s through Peggy is the
+  realistic worst case, and ~0.5 s the usual one). A poll on a healthy LAN+Peggy path takes
+  well under a second, and nothing is polled unless the node is idle.
+- **Deferred, not discarded:** the backend hands each announcement out only once, so the node
+  never throws a fetched one away because of a press. A list fetched while a press landed is
+  kept (`s_ann_pending`) and said at the next idle moment with no new GET; a list interrupted
+  mid-way keeps the announcements not yet started (`vn_keep_from`, host-tested) and says them
+  next time, while **the one that was mid-speech is dropped** (never repeat an alarm, never
+  talk over Kevin). Pending ones are dropped only if the server settings change or the node is
+  unclaimed. A kept one's MP3 may have expired by then (10 min TTL): its caption is then paced
+  over silence, as for a refused `audio_url`.
 - **Host checks:** `make -C firmware test` runs `test_vesper_announce` under ASan/UBSan: valid,
   empty, malformed, truncated and oversize bodies, bad entries, refused `audio_url`s, the 15 s /
-  backoff / `Retry-After` schedule, the JSON array helpers it adds to `vesper_proto.c`, and a
-  20,000-round fuzz.
+  backoff / `Retry-After` schedule, what a press leaves pending (`vn_keep_from`), the JSON array
+  helpers it adds to `vesper_proto.c`, and a 20,000-round fuzz.
 - **Known limits (on-device check pending):** the voice task's 320 ms pre-roll records while
   an announcement plays, so a press during one may send its last fraction of a second to STT
   along with the note. The hatch task and the voice task both write to the speaker

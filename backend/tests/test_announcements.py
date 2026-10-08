@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -20,6 +22,7 @@ from conftest import (
     make_settings,
 )
 
+import vesper_node.app as app_module
 from vesper_node.app import create_app
 from vesper_node.brain import claim_url_for, parse_announcements
 
@@ -159,6 +162,75 @@ async def test_tts_off_means_null_audio(mkapp, brain, providers) -> None:
     assert providers.calls["tts"] == []
 
 
+class SlowTTS:
+    """A TTS stub that takes ``delay_s`` per request and records how many ran at once."""
+
+    def __init__(self, delay_s: float) -> None:
+        self.delay_s = delay_s
+        self.inflight = 0
+        self.max_inflight = 0
+        self.calls = 0
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.calls += 1
+        self.inflight += 1
+        self.max_inflight = max(self.max_inflight, self.inflight)
+        try:
+            await asyncio.sleep(self.delay_s)
+        finally:
+            self.inflight -= 1
+        return httpx.Response(200, content=FAKE_MP3)
+
+
+def mkapp_with_tts(brain: Brain, clock: Clock, providers: Providers, registry, tts: SlowTTS):
+    return create_app(
+        make_settings(),
+        stt_transport=httpx.MockTransport(providers.stt),
+        brain_transport=httpx.MockTransport(brain),
+        tts_transport=httpx.MockTransport(tts),
+        clock=clock,
+        registry=registry,
+    )
+
+
+async def test_tts_over_budget_is_caption_only_within_budget(
+    brain, clock, providers, registry, monkeypatch, caplog
+) -> None:
+    # The brain has already marked the items delivered: a slow TTS must not make the poll
+    # outlast the firmware's wait. Over budget -> 200 in time, text present, audio_url null.
+    monkeypatch.setattr(app_module, "ANNOUNCE_TTS_BUDGET_S", 0.3)
+    caplog.set_level(logging.WARNING)
+    tts = SlowTTS(delay_s=5.0)
+    app = mkapp_with_tts(brain, clock, providers, registry, tts)
+    started = time.monotonic()
+    r = await poll(app)
+    elapsed = time.monotonic() - started
+    assert r.status_code == 200
+    assert elapsed < 2.0, elapsed  # the budget, not the TTS delay (5 s) or TTS_TIMEOUT_S (4 s)
+    assert r.json() == {
+        "announcements": [{"text": TIMER, "audio_url": None}, {"text": REMINDER, "audio_url": None}]
+    }
+    assert tts.calls == 2  # both were attempted (concurrently), both cut off by the budget
+    assert sum("tts over budget" in rec.getMessage() for rec in caplog.records) == 2
+    for secret in (TIMER, REMINDER, "plumber"):
+        assert secret not in caplog.text
+
+
+async def test_tts_is_minted_concurrently(brain, clock, providers, registry) -> None:
+    # Two items with a 0.4 s TTS each: minted together, so the poll takes ~0.4 s, not ~0.8 s,
+    # and both get their audio inside the 2 s budget.
+    tts = SlowTTS(delay_s=0.4)
+    app = mkapp_with_tts(brain, clock, providers, registry, tts)
+    started = time.monotonic()
+    r = await poll(app)
+    elapsed = time.monotonic() - started
+    items = r.json()["announcements"]
+    assert [i["text"] for i in items] == [TIMER, REMINDER]
+    assert all(i["audio_url"] for i in items)
+    assert tts.max_inflight == 2
+    assert elapsed < 0.75, elapsed
+
+
 async def test_tts_failure_means_null_audio(mkapp, brain, providers) -> None:
     providers.tts_status = 500
     r = await poll(mkapp())
@@ -212,12 +284,26 @@ def test_strict_validation() -> None:
             {"text": "x" * 200},
         ]
     }
-    texts, dropped = parse_announcements(body)
+    texts, dropped, unlabeled = parse_announcements(body)
     assert texts == ["fine"]  # only the first 5 entries are looked at
     assert dropped == 7
-    assert parse_announcements({"announcements": [ok] * 9}) == (["fine"] * 5, 4)
-    assert parse_announcements({"announcements": [{"text": "a\nb\t c"}]}) == (["a b c"], 0)
-    assert parse_announcements(None) == ([], 0)
+    assert unlabeled == 1  # kept, but without the contract's id/kind
+    assert parse_announcements({"announcements": [ok] * 9}) == (["fine"] * 5, 4, 5)
+    assert parse_announcements({"announcements": [{"text": "a\nb\t c"}]}) == (["a b c"], 0, 1)
+    assert parse_announcements(None) == ([], 0, 0)
+    labeled = {"id": "a1", "kind": "timer", "text": "fine"}
+    assert parse_announcements({"announcements": [labeled]}) == (["fine"], 0, 0)
+    for bad in ({**labeled, "kind": "alarm"}, {**labeled, "id": ""}, {**labeled, "id": 3}):
+        assert parse_announcements({"announcements": [bad]}) == (["fine"], 0, 1)
+
+
+async def test_unlabeled_items_are_spoken_and_counted(mkapp, brain, caplog) -> None:
+    caplog.set_level(logging.INFO)
+    labeled = {"id": "a2", "kind": "reminder", "text": REMINDER}
+    brain.body = {"announcements": [{"text": TIMER}, labeled]}
+    r = await poll(mkapp())
+    assert [i["text"] for i in r.json()["announcements"]] == [TIMER, REMINDER]
+    assert any("unlabeled=1" in rec.getMessage() for rec in caplog.records)
 
 
 async def test_invalid_items_dropped_valid_kept(mkapp, brain) -> None:
@@ -263,6 +349,27 @@ async def test_revoked_node_gets_nothing(mkapp, brain, registry) -> None:
     registry.revoke(NODE_ID)
     r = await poll(mkapp())
     assert (r.status_code, r.json()) == (403, {"error": "node_unauthorized"})
+    assert brain.claims == []
+
+
+async def test_head_never_claims(mkapp, brain, providers) -> None:
+    # A claim is at most once, so only GET may spend the node's announcements. HEAD (a probe,
+    # never the firmware) is 405 on this FastAPI route, never reaching the handler: no claim,
+    # no TTS, and the 5 s rate window is untouched. Pinned so a future Starlette-style
+    # auto-HEAD can't silently start claiming.
+    app = mkapp()
+    async with client_for(app) as c:
+        r = await c.head("/announcements", headers=auth())
+    assert r.status_code == 405
+    assert brain.claims == [] and providers.calls["tts"] == []
+    assert (await poll(app)).status_code == 200  # the GET right after is not rate limited
+    assert len(brain.claims) == 1
+
+
+async def test_head_without_bearer_is_401(mkapp, brain) -> None:
+    async with client_for(mkapp()) as c:
+        r = await c.head("/announcements")
+    assert r.status_code == 401
     assert brain.claims == []
 
 

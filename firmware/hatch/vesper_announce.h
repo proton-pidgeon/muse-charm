@@ -16,8 +16,10 @@
  * and says each one: its text is the caption, its audio_url (same acceptance
  * rules as message_done.audio_url: vp_resolve_audio_url) goes through the
  * reply-MP3 path, a null or refused one leaves the caption paced over
- * silence. The server hands each announcement out once, so whatever a press
- * interrupts is dropped, never asked for again.
+ * silence. The server hands each announcement out once, so a fetched list
+ * is kept until it is said: a press that lands during the GET, or during
+ * the list, defers the ones not yet started to the next idle moment
+ * (vn_keep_from); only the one that was mid-speech is dropped.
  *
  * Like vesper_proto.c this does no I/O, keeps no clock (the caller passes
  * milliseconds) and never allocates.
@@ -70,6 +72,13 @@ typedef struct {
  * as a caption only); null or missing means a caption only.
  */
 bool vn_parse(const char *body, size_t len, const vp_url_t *base, vn_list_t *out);
+
+/*
+ * Keeps items[from..n) (the ones not yet started when a press interrupted the
+ * list), moved to the front; the rest are gone. from <= 0 keeps everything,
+ * from >= n keeps nothing. Returns the new n.
+ */
+int vn_keep_from(vn_list_t *l, int from);
 
 /* <base>/announcements. False if it doesn't fit. */
 bool vn_url(const vp_url_t *base, char *out, size_t cap);

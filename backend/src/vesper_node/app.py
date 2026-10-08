@@ -105,6 +105,11 @@ UPLOAD_TIMEOUT_S = 30.0
 MAX_CONCURRENT_TURNS = 2
 BUSY_RETRY_AFTER_S = 2
 ANNOUNCE_MIN_INTERVAL_S = 5.0  # per node; the firmware polls every 15 s
+# The whole TTS phase of GET /announcements (all items, minted concurrently). The brain has
+# already marked the items delivered when the claim answers, so the poll must answer inside the
+# firmware's response wait (8 s after connect) or the announcements are lost: claim (3 s)
+# + this + overhead stays well inside it. A slow mint is a caption-only item, never a late one.
+ANNOUNCE_TTS_BUDGET_S = 2.0
 SSE_PREAMBLE_BYTES = 2048  # Peggy HTTP/2 edge buffers tiny streams (memory: SSE priming)
 SSE_PING_S = 10.0
 AUDIO_NAME_RE = re.compile(r"^([A-Za-z0-9_-]{22,64})\.mp3$")
@@ -154,7 +159,9 @@ def _is_node_route(method: str, path: str) -> bool:
     return (
         (method == "POST" and path == "/turn")
         or (method in {"GET", "HEAD"} and path.startswith(("/audio/", "/firmware/")))
-        or (method in {"GET", "HEAD"} and path == "/announcements")
+        # GET only: a claim is at most once, so no other method (HEAD included: FastAPI answers
+        # it 405, it never reaches the handler) may spend the node's announcements.
+        or (method == "GET" and path == "/announcements")
     )
 
 
@@ -793,10 +800,24 @@ def create_app(
             )
         last_announce_poll[node_id] = now
         texts = await brain.claim_announcements(node_id=node_id)
-        items: list[dict[str, Any]] = []
-        for text in texts:
-            minted = await tts.mint(text, node=node_id) if tts.enabled else None
-            items.append({"text": text, "audio_url": f"audio/{minted[0]}.mp3" if minted else None})
+
+        async def mint_capped(text: str) -> tuple[str, int] | None:
+            # tts.mint never raises (a failure is None); only the budget can end it early.
+            try:
+                return await asyncio.wait_for(tts.mint(text, node=node_id), ANNOUNCE_TTS_BUDGET_S)
+            except TimeoutError:
+                log.warning("announcements: node=%s tts over budget: caption only", node_id)
+                return None
+
+        minted: list[tuple[str, int] | None] = (
+            list(await asyncio.gather(*(mint_capped(t) for t in texts)))
+            if tts.enabled and texts
+            else [None] * len(texts)
+        )
+        items: list[dict[str, Any]] = [
+            {"text": text, "audio_url": f"audio/{m[0]}.mp3" if m else None}
+            for text, m in zip(texts, minted, strict=True)
+        ]
         if items:
             log.info(
                 "announcements: node=%s count=%d with_audio=%d",

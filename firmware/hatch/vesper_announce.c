@@ -95,6 +95,22 @@ bool vn_parse(const char *body, size_t len, const vp_url_t *base, vn_list_t *out
     return true;
 }
 
+int vn_keep_from(vn_list_t *l, int from)
+{
+    if (from <= 0) {
+        return l->n;
+    }
+    if (from >= l->n) {
+        l->n = 0;
+        return 0;
+    }
+    int keep = l->n - from;
+    memmove(&l->items[0], &l->items[from], (size_t)keep * sizeof(l->items[0]));
+    memset(&l->items[keep], 0, (size_t)from * sizeof(l->items[0]));
+    l->n = keep;
+    return keep;
+}
+
 bool vn_url(const vp_url_t *base, char *out, size_t cap)
 {
     return vp_url_join(base, "/announcements", out, cap);

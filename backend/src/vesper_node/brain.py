@@ -16,7 +16,10 @@ Announcements (task 18): :meth:`BrainClient.claim_announcements` calls the brain
 ``POST /node/announcements/claim`` (same host, port and bearer as ``/ask``) for the node's due
 timers and reminders. The brain marks what it returns as delivered (at most once), so the call
 is never retried. Any failure is an empty list and a warning (status or exception class only);
-the announcement text is never logged.
+the announcement text is never logged. Its timeout is :data:`CLAIM_TIMEOUT_S` (3 s): the
+firmware waits a bounded time for the whole ``GET /announcements`` (claim + TTS), and the brain
+has already marked an item delivered by the time it answers, so a slow claim must still leave
+room for the TTS budget (``app.ANNOUNCE_TTS_BUDGET_S``) inside the node's wait.
 
 Room context (task 08): the caller prepends the node's registry room with
 :func:`with_room_context` before calling :meth:`BrainClient.ask`, so ``text`` here is already
@@ -28,7 +31,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -39,7 +42,7 @@ ASK_TIMEOUT_S = 30.0
 MAX_TEXT_CHARS = 1000  # brain_service.MAX_TEXT_CHARS
 NODE_CHANNEL = "node"
 CLAIM_PATH = "/node/announcements/claim"
-CLAIM_TIMEOUT_S = 5.0
+CLAIM_TIMEOUT_S = 3.0  # + the app's 2 s TTS budget stays inside the firmware's response wait
 MAX_ANNOUNCEMENTS = 5  # the brain returns at most 5 per claim
 MAX_ANNOUNCEMENT_CHARS = 200  # the brain's template cap
 
@@ -52,20 +55,36 @@ def claim_url_for(ask_url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, path.rstrip("/") + CLAIM_PATH, "", ""))
 
 
-def parse_announcements(payload: Any) -> tuple[list[str], int]:
-    """``(texts, dropped)`` from a claim response body. Strict: the body must be an object
-    whose ``announcements`` is a list; only its first :data:`MAX_ANNOUNCEMENTS` entries are
-    looked at, and each must be an object with a non-empty string ``text`` of at most
-    :data:`MAX_ANNOUNCEMENT_CHARS` chars. Anything else is dropped (and counted)."""
+ANNOUNCEMENT_KINDS = frozenset({"timer", "reminder"})
+
+
+class ParsedAnnouncements(NamedTuple):
+    texts: list[str]
+    dropped: int  # entries that weren't a usable announcement (no usable text, or past the cap)
+    unlabeled: int  # kept, but without the contract's string ``id`` / ``kind`` (schema drift)
+
+
+def parse_announcements(payload: Any) -> ParsedAnnouncements:
+    """``(texts, dropped, unlabeled)`` from a claim response body. Strict on what is spoken:
+    the body must be an object whose ``announcements`` is a list; only its first
+    :data:`MAX_ANNOUNCEMENTS` entries are looked at, and each must be an object with a
+    non-empty string ``text`` of at most :data:`MAX_ANNOUNCEMENT_CHARS` chars. Anything else
+    is dropped (and counted). A kept entry missing the contract's ``id`` (non-empty string) or
+    ``kind`` (``timer`` / ``reminder``) is still spoken (the brain already marked it delivered,
+    and only ``text`` reaches the node) but counted as ``unlabeled`` so drift shows in the log."""
     items = payload.get("announcements") if isinstance(payload, dict) else None
     if not isinstance(items, list):
-        return [], 0
+        return ParsedAnnouncements([], 0, 0)
     texts: list[str] = []
+    unlabeled = 0
     for item in items[:MAX_ANNOUNCEMENTS]:
         text = item.get("text") if isinstance(item, dict) else None
         if isinstance(text, str) and text.strip() and len(text) <= MAX_ANNOUNCEMENT_CHARS:
             texts.append(" ".join(text.split()))
-    return texts, len(items) - len(texts)
+            ident, kind = item.get("id"), item.get("kind")
+            if not (isinstance(ident, str) and ident.strip()) or kind not in ANNOUNCEMENT_KINDS:
+                unlabeled += 1
+    return ParsedAnnouncements(texts, len(items) - len(texts), unlabeled)
 
 
 def with_room_context(text: str, room: str | None) -> str:
@@ -165,16 +184,17 @@ class BrainClient:
         except ValueError:
             log.warning("announcements claim failed: node=%s reason=bad_json", node_id)
             return []
-        texts, dropped = parse_announcements(payload)
+        texts, dropped, unlabeled = parse_announcements(payload)
         malformed = not isinstance(payload, dict) or not isinstance(
             payload.get("announcements"), list
         )
-        if malformed or dropped:
+        if malformed or dropped or unlabeled:
             log.warning(
-                "announcements claim: node=%s malformed=%s dropped=%d",
+                "announcements claim: node=%s malformed=%s dropped=%d unlabeled=%d",
                 node_id,
                 malformed,
                 dropped,
+                unlabeled,
             )
         if texts:
             log.info(

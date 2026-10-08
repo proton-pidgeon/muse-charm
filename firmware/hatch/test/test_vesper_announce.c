@@ -242,6 +242,26 @@ static void test_bad_audio_url(void)
     CHECK(parse(body2) && s_list.n == 1 && !s_list.items[0].audio[0]);
 }
 
+/* A press interrupted the list: the ones not started yet are kept, in order, at the front. */
+static void test_keep_from(void)
+{
+    CHECK(parse("{\"announcements\":[{\"text\":\"one\",\"audio_url\":\"audio/" AID ".mp3\"},"
+                "{\"text\":\"two\"},{\"text\":\"three\",\"audio_url\":\"audio/" AID ".mp3\"}]}"));
+    CHECK(s_list.n == 3);
+    CHECK(vn_keep_from(&s_list, 0) == 3 && s_list.n == 3);     /* nothing started: all kept */
+    CHECK(vn_keep_from(&s_list, -1) == 3 && s_list.n == 3);
+    CHECK(vn_keep_from(&s_list, 1) == 2 && s_list.n == 2);     /* "one" was mid-speech: dropped */
+    CHECK_STR(s_list.items[0].text, "two");
+    CHECK_STR(s_list.items[0].audio, "");
+    CHECK_STR(s_list.items[1].text, "three");
+    CHECK_STR(s_list.items[1].audio, BASE "/audio/" AID ".mp3");
+    CHECK(s_list.items[2].text[0] == '\0' && s_list.items[2].audio[0] == '\0');   /* the vacated slot is clean */
+    CHECK(vn_keep_from(&s_list, 2) == 0 && s_list.n == 0);     /* the last one was mid-speech: none left */
+    CHECK(parse("{\"announcements\":[{\"text\":\"only\"}]}") && s_list.n == 1);
+    CHECK(vn_keep_from(&s_list, 5) == 0 && s_list.n == 0);     /* past the end: none left */
+    CHECK(vn_keep_from(&s_list, 1) == 0 && s_list.n == 0);     /* on an empty list: still empty */
+}
+
 static void test_url(void)
 {
     char url[VP_URL_MAX];
@@ -352,6 +372,7 @@ int main(void)
     test_bad_items_dropped();
     test_oversize();
     test_bad_audio_url();
+    test_keep_from();
     test_url();
     test_verdicts();
     test_schedule();

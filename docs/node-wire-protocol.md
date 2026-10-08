@@ -535,18 +535,26 @@ as a reply's. Same auth as `/turn`: the shared bearer, `X-Node-Id` and `X-Node-C
   request URL, so `…/vesper-node/announcements` → `…/vesper-node/audio/<id>.mp3`; fetched with
   the same headers as `GET /audio/{id}.mp3`; 10-minute TTL. `null` when TTS is off or failed:
   show the caption only.
-- The brain being down, slow (5 s), refusing, or answering anything malformed is **`200
+- The brain being down, slow (3 s), refusing, or answering anything malformed is **`200
   {"announcements": []}`** plus a warning in the backend log. The poll never gets a 5xx from
   that.
+- The poll answers in bounded time, because the brain has already marked the items delivered
+  when it answers the claim: a late reply would lose them. The claim has 3 s; the speech for
+  all items is minted **concurrently under one 2 s budget**, and an item whose speech isn't
+  ready in time comes back with `audio_url: null` (caption only) rather than late. So a poll
+  takes at most ~5 s plus overhead; the firmware waits 8 s for the response once connected.
 - `429 rate_limited` with `Retry-After`: this node polled again within 5 s. Back off.
 
 Backend side: `POST <brain>/node/announcements/claim` with `{"device_id": <node id>}` and
 `Authorization: Bearer <VESPER_BRAIN_TOKEN>` (the `/ask` token). Its URL is the configured
 `/ask` URL with the `/ask` path replaced (`VESPER_BRAIN_URL` + `/node/announcements/claim`).
-5 s timeout, **no retries and no redirects** (a retried claim could only lose announcements).
+3 s timeout, **no retries and no redirects** (a retried claim could only lose announcements).
 The reply is validated strictly: a list, of which only the first 5 entries are looked at, each
 an object with a non-empty string `text` of at most 200 chars; anything else is dropped and
-counted in the log. Announcements are not conversation turns: they never enter the node's
+counted in the log. A kept entry missing the brain contract's `id` / `kind` is still spoken
+(only `text` reaches the node) but counted in the log as `unlabeled`, so schema drift shows.
+Only `GET` reaches the claim: `HEAD` (or any other method) is `405` and never spends an
+announcement. Announcements are not conversation turns: they never enter the node's
 conversation memory or the memory-candidate queue. Their text is never logged (node id, counts
 and status codes only).
 

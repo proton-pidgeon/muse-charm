@@ -54,6 +54,15 @@ Contract: `/tmp/t18-contract.md` (orchestrator). Lane 18A (vesper-voice: persona
 - [x] Firmware 1.0.2: idle 15 s poll, `vesper_announce.c` parser/scheduler (host tests in
   `make test`), playback through the reply-MP3 path, PTT wins, SDK patch 0006. ESP-IDF build of a
   fresh `b1a3822` tree: exit 0, 0 warnings, 2,035,712 B.
+- [x] Review-gate fixes (escalation rung): backend mints all announcement TTS concurrently under
+  one 2 s budget (over budget → `audio_url: null`, never a late reply) and the brain claim is 3 s,
+  so a poll answers in ≤ ~5 s; `HEAD /announcements` is 405 and can never claim (pinned by test);
+  kept items missing `id`/`kind` are counted (`unlabeled=`) in the log. Firmware: `ann_get`
+  timeouts split 2 s connect / 8 s response (a dead server stalls a press ≤ ~2 s; a slow backend
+  is still waited for; README states the worst case); announcements a press lands on are
+  deferred, not dropped (`s_ann_pending`, `vn_keep_from` host-tested): only the one mid-speech
+  is lost. `backend make verify` 582 green, `firmware make test` green, fresh-tree ESP-IDF build
+  exit 0, 0 warnings, 2,035,712 B signed (unchanged).
 - [ ] HUMAN GATE: publish 1.0.2 (`vesper-node firmware publish`) → node OTAs → set a timer and a
   reminder by voice → hear them announced on the node; press PTT during one (it stops at once).
 - [ ] HUMAN GATE: live PTT tests of web/news/calendar/camera, timers, reminders, lists, weather
