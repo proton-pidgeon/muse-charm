@@ -37,8 +37,8 @@
 - [x] Safety: no memory-path code path can invoke home-control or any other action (reviewer-verified)
 - [x] Privacy: no audio, no full transcripts, no third-party statements in candidates (tests as proof)
 - [x] Review contract documented in `docs/node-memory-integration.md`
-- [ ] Green build + adversarial review per the /implement gates; merged to main
-- [ ] Backend redeployed (launchd); live turn with "remember this" produces a candidate
+- [x] Green build + adversarial review per the /implement gates; merged to main
+- [x] Backend redeployed (launchd); live turn with "remember this" produces a candidate
 
 ## Explicitly out of scope
 - Vesper's main-agent review loop (that's her runtime, not this repo).
