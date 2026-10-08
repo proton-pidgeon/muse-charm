@@ -16,18 +16,25 @@
 - Palette discipline: ~32 colors like the owl, procedural (no bitmaps)
 
 ## Deliverables
-- [ ] Successor to `firmware/avatar/muse_pixel.c`: procedural Iconic face renderer, 64×64 palette-indexed, honoring the `muse_pixel.h` contract (same API boundary the owl used — keep the hardened boundary from task 04's review)
-- [ ] All 7 modes render: BOOT, IDLE, LISTENING, THINKING, SPEAKING, ERROR, OFF — KEEP the existing accent-color scheme (gold idle, cyan listening, magenta thinking, mint speaking, red error); the cybernetic eye glow should take the mode accent color
-- [ ] Mode behaviors: listening (eye brightens/scans), thinking (circuit pulse), speaking (subtle mouth/activity indicator), error (red) — severe, not playful
-- [ ] GIF previews for every mode in `firmware/avatar/gifs/` (follow the task 04 pattern)
-- [ ] Framebuffer verification on the real AiPi Lite for all modes (task 05 pattern)
-- [ ] Retire the owl: remove or clearly supersede the owl renderer; the Iconic face is the DEFAULT display avatar in all firmware builds going forward
-- [ ] Device snaps in `firmware/avatar/device-snaps/` showing the new avatar on the 128×128 display
+- [x] Successor to `firmware/avatar/muse_pixel.c`: procedural Iconic face renderer, 64×64 palette-indexed, honoring the `muse_pixel.h` contract (same API boundary the owl used — keep the hardened boundary from task 04's review)
+  > 2026-10-08: same file name (the SDK build glob and make_gifs pick it up), 32 palette entries, polygons + rules only, Q12 integer per-pixel work, static memory only. Boundary kept and extended (NULL pose, NaN/inf/huge times and levels, out-of-range modes, set_size/scale bounds); hostile-pose run clean under ASan + UBSan.
+- [x] All 7 modes render: BOOT, IDLE, LISTENING, THINKING, SPEAKING, ERROR, OFF — KEEP the existing accent-color scheme (gold idle, cyan listening, magenta thinking, mint speaking, red error); the cybernetic eye glow should take the mode accent color
+- [x] Mode behaviors: listening (eye brightens/scans), thinking (circuit pulse), speaking (subtle mouth/activity indicator), error (red) — severe, not playful
+  > boot = scan-line draw-in + ring-by-ring ignite; off = eye collapses to its core and goes dark, natural eye closes; happy = acknowledge flare (no smile). Table in `firmware/README.md`.
+- [x] GIF previews for every mode in `firmware/avatar/gifs/` (follow the task 04 pattern)
+- [x] Framebuffer verification on the real AiPi Lite for all modes (task 05 pattern)
+  > `MUSE_BENCH=1` build of `sdk-impl-13-fresh`, `snap.py '>face=<mode>'` for all 7 modes + happy; all render correctly at the 96 px canvas (1.5×).
+- [x] Retire the owl: remove or clearly supersede the owl renderer; the Iconic face is the DEFAULT display avatar in all firmware builds going forward
+  > owl source replaced (git history only); `apply-sdk.sh`/`install.sh` install the Iconic face; also installed in the pristine `scratch/muse-gadget-sdk` clone (install.sh's default).
+- [x] Device snaps in `firmware/avatar/device-snaps/` showing the new avatar on the 128×128 display
 
 ## Definition of done
 - [ ] Green build + adversarial review per the /implement gates; merged to main
-- [ ] Final firmware flashed to the REAL AiPi Lite; the 128×128 display shows the Iconic face (device snap as proof)
+  > green gate done by the implementer (make -C firmware test, -Werror host build + bench, board.sh build aipi with the custom avatar); adversarial review and merge are the orchestrator's.
+- [x] Final firmware flashed to the REAL AiPi Lite; the 128×128 display shows the Iconic face (device snap as proof)
+  > canonical (non-bench) 1.0.0 build of `sdk-impl-13-fresh` with the Iconic avatar flashed 2026-10-08 and booted clean; snaps are from the bench build of the same tree and avatar source. If review changes the art, rebuild + reflash.
 - [ ] HUMAN GATE: Kevin sees the rendered result on the device (or a faithful snap) and approves the look — he picked the direction, he confirms the execution
+  > pending: show Kevin `firmware/avatar/device-snaps/sheet.png` (or the board itself).
 
 ## Anti-deliverables (do NOT build in this task)
 - Photorealism — impossible in 64×64 procedural pixel art; stay graphic and iconic
