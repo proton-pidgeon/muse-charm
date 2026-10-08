@@ -231,6 +231,58 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
 - Task 09 (F1) may amend this doc while it implements the firmware side. Record any change in
   the changelog below.
 
+## Node firmware notes (task 09)
+
+How the firmware backend (`firmware/hatch/`, the third `muse_hatch_*` backend) uses v1. None
+of this changes the wire shape, so the version stays 1.
+
+- **Upload.** The node opens `POST <base>/turn` at the button press with
+  `Transfer-Encoding: chunked`, sends the 44-byte streaming WAV header (both sizes
+  `0xFFFFFFFF`), then streams the PCM in chunks of about 4 KB (128 ms) while the button is
+  held, so the TLS handshake and most of the upload overlap the speech. It sends all five
+  request headers on every turn, `X-Vesper-Node-Protocol: 1` included. It keeps a copy of the
+  note (at most 512 KiB) only for the one `503 busy` retry, which re-sends it with a
+  `Content-Length`. A note under 0.3 s is never sent (`DIDN'T CATCH THAT` on the device).
+- **Base URL.** NVS `muse`:`host` holds the base URL, e.g. `https://peggy.fly.dev/vesper-node`
+  or `http://[::1]:8796`. The turn URL is `<base>/turn`. `http://` is accepted so a LAN, `[::1]`
+  or 6PN URL works before the Peggy handle (task 12) exists. `https://` uses the ESP-IDF
+  certificate bundle. Redirects are never followed, so the bearer can't be carried elsewhere.
+  The URL is at most 63 characters (`MUSE_HOST_MAX`).
+- **`audio_url` is accepted only as a plain relative reference.** Allowed are `audio/<id>.mp3`
+  and `/audio/<id>.mp3`, built from `[A-Za-z0-9._~-]` segments. The node refuses anything with a
+  scheme, `//`, `.`/`..` segments, `%`, `?`, `#`, `\`, whitespace, or more than 160 characters,
+  and treats it as `null` (caption over silence). It sends its bearer to that URL, so it must
+  never point off the configured server. The backend's `audio/<token_urlsafe>.mp3` passes.
+- **SSE limits.** Comment lines of any length are skipped without being buffered, so the 2 KB
+  preamble and pings cost nothing. A single field line, or one event's joined `data`, longer
+  than 4 KiB drops that event. **Keep every event's `data` under 4 KiB.** A v1 `text_delta`
+  carrying a whole spoken reply (a few sentences) is far below that. Each caption message
+  keeps at most 1023 bytes of text, cut on a UTF-8 character boundary, and at most 4 messages
+  per turn are shown. CRLF, LF and CR line endings are all accepted. Unknown events and fields
+  are ignored. A `done` with `ok: true` after an `error` still ends the turn as failed.
+  Nothing after `done` is read.
+- **Timeouts.** Connect and each upload write: 10 s. Release to status: 15 s. During the reply,
+  60 s with no bytes at all (pings count) ends the turn with `VESPER TIMED OUT`. The whole turn
+  is capped at 180 s. A stream that ends without `done` still shows any text that arrived.
+  With no text it fails as `LOST CONNECTION TO VESPER`.
+- **Captions for pre-stream errors** (`vp_http_verdict`): 401 `TOKEN REFUSED`, 400
+  `BAD DEVICE ID` / `UPDATE THE FIRMWARE` / `REQUEST REFUSED`, 413 `NOTE TOO LONG`, 415
+  `BAD AUDIO TYPE`, 422 `COULDN'T READ THE AUDIO`, 408 `UPLOAD TOO SLOW`, 404/405
+  `CHECK THE SERVER URL`, 503 (after the retry) `VESPER IS BUSY`, no response
+  `CAN'T REACH VESPER`, anything else `VESPER SERVER ERROR`. For an SSE `error` the node shows
+  the server's `message`. If that is empty, it falls back to a fixed caption per `code`.
+- **Reachability check.** The settings "test" action (serial `>hatch.test`) sends
+  `GET <base>/healthz` with the bearer. 200 means connected and 401 means the token was refused.
+  Any other status counts as reachable. Through Peggy the edge needs the bearer, which is why
+  the node sends it even though the backend's `/healthz` ignores it.
+- **TTS (task 10).** On `message_done` with a non-null, accepted `audio_url`, the firmware
+  calls `vesper_tts_slot_offer(<resolved absolute URL>, msg)`. Task 09 ships only a weak
+  default that declines, so every reply is shown as a caption paced over silence (16 chars/s),
+  the same as stock firmware.
+
 ## Changelog
 
 - **v1 (2026-10-07, task 07):** initial protocol.
+- **v1, firmware notes (2026-10-07, task 09):** added *Node firmware notes*, which describes how
+  the node uses v1: chunked upload, `audio_url` acceptance rules, the 4 KiB SSE event limit,
+  timeouts and captions. These are clarifications only, with no wire change and no version bump.

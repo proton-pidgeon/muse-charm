@@ -1,0 +1,98 @@
+diff --git a/esp32/cmake/validate_config.cmake b/esp32/cmake/validate_config.cmake
+index 77cefa01858f9771a66764bd9e988d07e2fef9a5..1599cdf34ce37b58997052cf94450db8810f1447 100644
+--- a/esp32/cmake/validate_config.cmake
++++ b/esp32/cmake/validate_config.cmake
+@@ -33,23 +33,6 @@ if((NOT CONFIG_LWIP_TCP_SND_BUF_DEFAULT EQUAL 16384 OR
+         "ESP32 Device SDK requires TCP send buffer and receive window 16384 (5760 on the no-tunnel Cardputer ADV) for DMA headroom. ${GADGET_CONFIG_REGEN_HINT}")
+ endif()
+ 
+-# A token from gadgets.muse.ai is mgst_ plus 43 canonical base64url characters.
+-# Manufacturer builds pair with fleet attestation instead.
+-if("${CONFIG_GADGET_SDK_TOKEN}" STREQUAL "")
+-    if(NOT CONFIG_HOMEHUB_PAIRING_EFUSE_AUTH)
+-        message(WARNING
+-            "No SDK token: set CONFIG_GADGET_SDK_TOKEN (idf.py menuconfig > ESP32 Device SDK) "
+-            "to the token from gadgets.muse.ai. Gadgets without one will stop pairing.")
+-    endif()
+-else()
+-    string(LENGTH "${CONFIG_GADGET_SDK_TOKEN}" GADGET_SDK_TOKEN_LENGTH)
+-    if(NOT GADGET_SDK_TOKEN_LENGTH EQUAL 48 OR
+-       NOT CONFIG_GADGET_SDK_TOKEN MATCHES "^mgst_[A-Za-z0-9_-]*[AEIMQUYcgkosw048]$")
+-        message(FATAL_ERROR
+-            "CONFIG_GADGET_SDK_TOKEN is not a valid SDK token. Copy it again from gadgets.muse.ai.")
+-    endif()
+-endif()
+-
+ # Manufacturer attestation must remain inaccessible to unsigned firmware.
+ # Community pairing is independent of logging, OTA signing, and board selection.
+ if(CONFIG_HOMEHUB_PAIRING_EFUSE_AUTH)
+diff --git a/esp32/main/CMakeLists.txt b/esp32/main/CMakeLists.txt
+index fc3457f743ea7a754e87a8da0bd3179e6611a6bb..9d5f77604f8ff04e89bede1ebe6bdc9f985604d6 100644
+--- a/esp32/main/CMakeLists.txt
++++ b/esp32/main/CMakeLists.txt
+@@ -15,28 +15,16 @@
+ set(GADGET_SRCS
+     "main.c"
+     "app.c"
+-    "ble_server.c"
+     "wifi_mgr.c"
+     "wifi_known.c"
+     "identity.c"
+     "config_store.c"
+-    "vm_api.c"
+     "diagnostic_log.c"
+     "stack_monitor.c"
+-    "bug_report.c"
+     "ota.c"
+-    "image_fetch.c"
+     "../avatar/happy_anim.c"
+     "pixel_font.c"
+     "button.c"
+-    "tunnel_netif.c"
+-    "net_discovery.c"
+-    "noise_control.cpp"
+-    "noise_tunnel.cpp"
+-    "link_pairing.c"
+-    "pairing_signer_policy.c"
+-    "pairing_transcript.c"
+-    "factory_test.c"
+ )
+ 
+ set(GADGET_REQUIRES
+@@ -49,7 +37,6 @@ set(GADGET_REQUIRES
+     app_update
+     esp_app_format
+     esp-tls
+-    noise_core
+     product_info
+     bt
+     driver
+@@ -103,3 +90,8 @@ idf_component_register(
+     PRIV_INCLUDE_DIRS "../avatar"
+     REQUIRES ${GADGET_REQUIRES}
+ )
++
++# Vesper: CONFIG_GADGET_SDK_TOKEN (Meta's maker token) is gone from Kconfig.
++# identity.c is kept byte-identical and still names it in identity_sdk_token(),
++# which nothing calls any more; give that one file an empty value.
++set_source_files_properties("identity.c" PROPERTIES COMPILE_DEFINITIONS "CONFIG_GADGET_SDK_TOKEN=\"\"")
+diff --git a/esp32/main/Kconfig.projbuild b/esp32/main/Kconfig.projbuild
+index 1366c246f72a7d367368f6d68a294b3dedc5d17e..2807a6af39b2928b656bec2b015fe95ed30780a7 100644
+--- a/esp32/main/Kconfig.projbuild
++++ b/esp32/main/Kconfig.projbuild
+@@ -23,15 +23,6 @@ menu "ESP32 Device SDK"
+             backend strings. Internal builds override this to match
+             the shipping product name.
+ 
+-    config GADGET_SDK_TOKEN
+-        string "Muse Gadgets SDK token"
+-        default ""
+-        help
+-            Your mgst_ SDK token from gadgets.muse.ai (Account > SDK tokens).
+-            Every gadget needs one to pair. The device hands it to the Muse
+-            app inside the encrypted pairing session and includes it when it
+-            refreshes its device token.
+-
+     config HOMEHUB_WIFI_SSID
+         string "WiFi SSID override (dev iteration)"
+         default ""

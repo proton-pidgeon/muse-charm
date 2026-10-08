@@ -1,0 +1,224 @@
+diff --git a/esp32/components/muse/CMakeLists.txt b/esp32/components/muse/CMakeLists.txt
+index 34982cd5ad6a83458cb816aaa3c6526da65ce7d0..9bebc4a8ac48781ce607eed39eb085f0c17fea43 100644
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -42,12 +42,15 @@ if(CONFIG_MUSE_ENABLED)
+         "muse_lv_mem.c"
+         "muse_link.c"
+         "muse_ble.c")
+-    if(CONFIG_MUSE_HATCH)
+-        list(APPEND srcs "muse_chat.c" "muse_account_api.c" "muse_chat_session.cpp")
+-        list(APPEND embed "test_reply.mp3")   # muse_hatch_mp3_selftest
+-    else()
+-        list(APPEND srcs "muse_chat_link.c")   # text replies over Link's session
++    # Vesper: the muse_hatch_* seam's third backend, speaking the Vesper node
++    # protocol (muse-charm firmware/hatch/, installed into vesper/ by
++    # firmware/apply-sdk.sh). It replaces muse_chat_session.cpp (Meta's VM
++    # session) and muse_chat_link.c (Link's session), both deleted.
++    if(NOT CONFIG_MUSE_HATCH)
++        message(FATAL_ERROR "The Vesper backend needs CONFIG_MUSE_HATCH (a board with PSRAM)")
+     endif()
++    list(APPEND srcs "muse_chat.c" "vesper/muse_chat_vesper.c" "vesper/vesper_proto.c")
++    list(APPEND embed "test_reply.mp3")   # muse_hatch_mp3_selftest
+     list(APPEND srcs "muse_chat_text.c")
+     # Your own character (tools/muse/AVATAR_RECIPE.md) stands in for the default
+     # avatar when avatar/muse_pixel.c exists here; this avatar/ is gitignored. The
+@@ -85,21 +88,21 @@ if(CONFIG_MUSE_ENABLED)
+ elseif(CONFIG_HOMEHUB_VOICE)
+     # The Voice PE board uses just the Hatch voice session; the project's main/
+     # voice_muse_chat.c stands in for the Muse settings, Wi-Fi and Link hooks.
+-    list(APPEND srcs "muse_chat.c" "muse_account_api.c" "muse_chat_session.cpp" "muse_chat_text.c" "muse_text.c")
+-    list(APPEND embed "test_reply.mp3")
++    # Vesper: the Voice PE path borrowed Meta's session, which is gone.
++    message(FATAL_ERROR "The Vesper patch set supports Muse boards only (CONFIG_MUSE_ENABLED)")
+ endif()
+ 
+ set(muse_priv_requires
+     esp_timer esp_driver_usb_serial_jtag esp_psram nvs_flash
+     bt esp-tls mbedtls esp_app_format esp_http_client
+-    noise_core minimp3
++    minimp3
+     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
+     esp_driver_pcnt)
+ list(APPEND muse_priv_requires camera)
+ 
+ idf_component_register(
+     SRCS ${srcs}
+-    INCLUDE_DIRS "."
++    INCLUDE_DIRS "." "vesper"
+     EMBED_FILES ${embed}
+     WHOLE_ARCHIVE   # muse_lv_mem.c provides symbols only LVGL references
+     REQUIRES esp_driver_gpio esp_driver_i2c
+diff --git a/esp32/components/muse/Kconfig b/esp32/components/muse/Kconfig
+index 3c1f3188f2a4a1c0b14f0ffbbe30014b230f9776..2b083a1ad17bd5b184f4ccd5bbb8c1cbadffa432 100644
+--- a/esp32/components/muse/Kconfig
++++ b/esp32/components/muse/Kconfig
+@@ -106,16 +106,34 @@ menu "Muse"
+             Leave disabled to build without camera support.
+ 
+     config MUSE_HATCH
+-        bool "Muse's own voice session"
++        bool "Muse's own voice session (the Vesper node backend)"
+         depends on MUSE_ENABLED
+         default y if SPIRAM
+         default n
+         help
+-            Push-to-talk turns go over a voice session of Muse's own, to the
+-            VM Home Link is paired with or one set up on the device with a
+-            device token. Replies are text, shown as captions; start_tts in
+-            muse_chat_session.cpp is where a TTS API of your own can speak
+-            them. Needs PSRAM. Without it, voice notes go over Home Link's own
+-            session to its paired VM and replies are shown as text.
++            Push-to-talk turns go to the Vesper node backend
++            (components/muse/vesper/, muse-charm docs/node-wire-protocol.md):
++            each note is POSTed to <server URL>/turn and the reply streams
++            back as SSE captions. Needs PSRAM; boards without it are not
++            supported by the Vesper patch set.
++
++    config VESPER_NODE_URL
++        string "Vesper node server base URL (default)"
++        depends on MUSE_HATCH
++        default ""
++        help
++            Used when NVS muse:host is unset, e.g.
++            https://peggy.fly.dev/vesper-node. Normally set on the device
++            instead: serial console ">hatch.host=<url>".
++
++    config VESPER_NODE_TOKEN
++        string "Vesper node bearer token (default; leave empty)"
++        depends on MUSE_HATCH
++        default ""
++        help
++            Used when NVS muse:node_token is unset. Leave this empty in any
++            committed configuration: it would be compiled into the image in
++            plain text. Provision the token on the device instead: serial
++            console ">hatch.token=<token>" (never echoed).
+ 
+ endmenu
+diff --git a/esp32/components/muse/muse_chat.c b/esp32/components/muse/muse_chat.c
+index d56a90a3f9baaac54793ac3809a0a4298369eea4..f54c39c0a3afa030430791587e05968c4ae82b0f 100644
+--- a/esp32/components/muse/muse_chat.c
++++ b/esp32/components/muse/muse_chat.c
+@@ -20,11 +20,11 @@
+ 
+ #include "freertos/FreeRTOS.h"
+ 
+-#include "muse_link.h"
+ #include "muse_settings.h"
++#include "vesper_proto.h"
+ #include "muse_wifi.h"
+ 
+-/* Connection state as last reported by the session task (muse_chat_session.cpp). */
++/* Connection state as last reported by the session task (vesper/muse_chat_vesper.c). */
+ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+ static muse_hatch_state_t s_result = MUSE_HATCH_UNTESTED;
+ static char s_detail[48];
+@@ -37,9 +37,12 @@ void muse_hatch_report(muse_hatch_state_t state, const char *detail)
+     portEXIT_CRITICAL(&s_lock);
+ }
+ 
++/* Vesper: a server URL and the node token (Meta's account link no longer counts). */
+ bool muse_hatch_configured(void)
+ {
+-    return muse_settings_hatch_token_len() > 0 || muse_link_hatch_linked();
++    char host[MUSE_HOST_MAX + 1];
++    muse_settings_hatch_host(host);
++    return vp_url_valid(host) && muse_settings_hatch_token_len() > 0;
+ }
+ 
+ void muse_hatch_test(void)
+@@ -61,7 +64,7 @@ void muse_hatch_status(muse_hatch_status_t *out)
+ {
+     if (!muse_hatch_configured()) {
+         out->state = MUSE_HATCH_NOT_SET;
+-        strlcpy(out->detail, "Pair in the Muse app", sizeof(out->detail));
++        strlcpy(out->detail, "Set server URL + token", sizeof(out->detail));
+         return;
+     }
+     portENTER_CRITICAL(&s_lock);
+diff --git a/esp32/components/muse/muse_settings.c b/esp32/components/muse/muse_settings.c
+index df957673fc3558dbf96c2addd0b0e6fbeeb87b8e..d7fdebb0d134c0a5cec4fd2e9b29a2ab44e8de9e 100644
+--- a/esp32/components/muse/muse_settings.c
++++ b/esp32/components/muse/muse_settings.c
+@@ -29,7 +29,12 @@
+ static const char *TAG = "muse_settings";
+ 
+ #define NS "muse"
+-#define DEFAULT_HOST "hatch.metaaivm.com"
++/* Vesper: "host" holds the node server's base URL (empty until provisioned:
++ * serial ">hatch.host=<url>"). The bearer lives under its own key; the stock
++ * "token" key may hold a Meta device token and is never read. */
++#define DEFAULT_HOST CONFIG_VESPER_NODE_URL
++#define DEFAULT_TOKEN CONFIG_VESPER_NODE_TOKEN
++#define TOKEN_KEY "node_token"
+ 
+ static struct {
+     uint8_t volume;
+@@ -52,6 +57,7 @@ static struct {
+     .sleep_s = 120,
+     .wifi_on = true,
+     .host = DEFAULT_HOST,
++    .token = DEFAULT_TOKEN,
+ };
+ 
+ static SemaphoreHandle_t s_lock;
+@@ -131,14 +137,15 @@ esp_err_t muse_settings_init(void)
+     load_str("pass", s.pass, sizeof(s.pass));
+     load_str("host", s.host, sizeof(s.host));
+     load_str("vm", s.vm, sizeof(s.vm));
+-    load_str("token", s.token, sizeof(s.token));
++    load_str(TOKEN_KEY, s.token, sizeof(s.token));
+ 
+     s.volume = clampi(s.volume, 0, 100);
+     s.mic_gain = clampi(s.mic_gain, 0, MUSE_MIC_GAIN_MAX);
+     s.brightness = clampi(s.brightness, 10, 100);
+     ESP_LOGI(TAG, "vol %d%s, mic %d dB, bright %d, sleep %ds, wifi %s (%s), ble %s, muse %s",
+              s.volume, s.speaker_on ? "" : " (speaker off)", s.mic_gain, s.brightness, s.sleep_s, s.wifi_on ? "on" : "off",
+-             "network saved by Link", s.ble_on ? "on" : "off", s.token[0] ? "token set" : "no token");
++             "network saved by Link", s.ble_on ? "on" : "off", s.token[0] ? "node token set" : "no node token");
++    ESP_LOGI(TAG, "vesper server: %s", s.host[0] ? s.host : "(not set)");
+     return ESP_OK;
+ }
+ 
+@@ -260,6 +267,10 @@ void muse_settings_set_wifi(const char *ssid, const char *pass)
+ 
+ void muse_settings_set_hatch_host(const char *host)
+ {
++    if (host && strlen(host) > MUSE_HOST_MAX) {
++        ESP_LOGW(TAG, "server URL too long (max %d characters); not saved", MUSE_HOST_MAX);
++        return;   /* a cut URL could point somewhere else */
++    }
+     LOCKED({
+         strlcpy(s.host, host && host[0] ? host : DEFAULT_HOST, sizeof(s.host));
+         save_str("host", s.host);
+@@ -287,7 +298,7 @@ esp_err_t muse_settings_set_hatch_token(const char *token, bool append)
+         } else {
+             memcpy(s.token + have, token, add);
+             s.token[have + add] = '\0';
+-            save_str("token", s.token);
++            save_str(TOKEN_KEY, s.token);
+         }
+     });
+     if (err == ESP_OK) {
+diff --git a/esp32/components/muse/muse_settings.h b/esp32/components/muse/muse_settings.h
+index 705a5cb2846285403937265a6548c18afa3a694f..9d3e68099ff6f2bf3655b8c99fa617a9068bb27b 100644
+--- a/esp32/components/muse/muse_settings.h
++++ b/esp32/components/muse/muse_settings.h
+@@ -30,7 +30,7 @@
+ 
+ #define MUSE_SSID_MAX 32
+ #define MUSE_PASS_MAX 64
+-#define MUSE_HOST_MAX 63
++#define MUSE_HOST_MAX 63      /* Vesper: the server base URL (63 fits peggy and 6PN URLs) */
+ #define MUSE_VM_MAX 63
+ #define MUSE_TOKEN_MAX 1023
+ 
+@@ -61,6 +61,8 @@ bool muse_settings_wifi_on(void);
+ bool muse_settings_ble_on(void);
+ 
+ void muse_settings_wifi(char ssid[MUSE_SSID_MAX + 1], char pass[MUSE_PASS_MAX + 1]);
++/* Vesper: "host" is the node server's base URL and "token" its bearer (NVS
++ * muse:node_token); the stock muse:token key (a Meta device token) is never read. */
+ void muse_settings_hatch_host(char out[MUSE_HOST_MAX + 1]);
+ void muse_settings_hatch_vm(char out[MUSE_VM_MAX + 1]);
+ void muse_settings_hatch_token(char out[MUSE_TOKEN_MAX + 1]);
