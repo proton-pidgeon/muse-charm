@@ -330,3 +330,9 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - NOT verified on real display yet: board is claimed so no code shows; re-verification needs unclaim → photo → re-claim. Left for Kevin (reboot to get 1.0.1, then decide).
 - Issue #13 -> Done pending board update (gh scope blocked — needs main agent).
 - Task 16 dispatched to Studio (~15:20 CDT) now that the host is free. 30-min vigilance armed.
+
+## 2026-10-08 ~15:40 CDT — Task 16 (node conversation memory) GREEN, merged, redeployed
+- Merged 6ccaf2f (364 tests, verify OK). Per-node 15-turn transcript in `~/.config/vesper-voice/node-memory.json` (mode 600, atomic, survives restarts; `VESPER_NODE_MEMORY_FILE`), prepended to /ask within the 1000-char limit (user words never clipped). Session idle (15 min, `VESPER_NODE_SESSION_IDLE_MINUTES`) compresses to an EXTRACTIVE summary — no brain call, because /ask always runs the home-control tool loop (replaying "turn off the lights" was the review's HIGH). Voice room assignment ("you're in the office", "this room is called the lab") with marker/room-noun gate; no brain round-trip.
+- Review: GPT-5.5 HIGH + Fable HIGH (room false positives) → fixed on the fable rung; delta approve. Design-gap notes for Kevin appended to `docs/node-memory-integration.md` (brain no-tools summarize path; expose /ask `history`). `docs/node-wire-protocol.md` Q4 amended: transcripts ARE now persisted on the Studio (never logged) — Kevin may want to re-read that wording.
+- Redeployed via launchd (bootstrap I/O error 5 on first try = bootout race; retry OK). Live stub-client: "Tell me more about that" followed up on Moby Dick; "You're in the kitchen" updated the registry with spoken confirmation. Temp node `homelink-stubclient` removed (its stale history entry in node-memory.json is harmless).
+- HUMAN GATE: real-board PTT test on homelink-c86320. Cosmetic follow-up: `turn done` log line shows the pre-assignment room on a room-assignment turn.

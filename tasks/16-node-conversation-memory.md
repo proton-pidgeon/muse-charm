@@ -36,8 +36,10 @@
 - [x] Session awareness: 15-min idle compresses to a summary; summary seeds the next session
 - [x] Voice room assignment: "you're in the office" updates the registry and confirms by voice; no false positives on incidental mentions (tests as proof)
 - [x] Part 4 spec written (`docs/node-memory-integration.md`); explicitly NOT implemented
-- [ ] Green build + adversarial review per the /implement gates; merged to main
-- [ ] Backend redeployed (launchd) with the new code; live PTT test confirms context works
+- [x] Green build + adversarial review per the /implement gates; merged to main
+  > merged 6ccaf2f (364 tests). Review: GPT-5.5 r1 HIGH (idle summary via action-capable /ask) confirmed by Fable + a Fable HIGH (room false positives: "this room is cold") → fixed on the fable rung (extractive-only summary; naming-marker/room-noun gate); GPT-5.5 delta approve, Fable unblock; Fable advisory (superlatives/idioms after "the") applied before merge.
+- [~] Backend redeployed (launchd) with the new code; live PTT test confirms context works
+  > redeployed 2026-10-08 15:36 (pid 47692; first bootstrap hit the bootout race, retry OK). Live stub-client turns through real STT/brain/TTS on a temp node: "Who wrote Moby Dick?" → "Tell me more about that" answered about Moby Dick (context works); "You're in the kitchen" → registry study→kitchen + spoken confirmation, no brain call; live log carries no transcript text. Temp node removed. HUMAN GATE: real-board PTT test on homelink-c86320 (Kevin).
 
 ## Implementation notes (implement/16-node-conversation-memory)
 
