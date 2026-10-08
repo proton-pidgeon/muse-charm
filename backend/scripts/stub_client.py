@@ -11,7 +11,9 @@ It stands in for the firmware (task 09) and speaks docs/node-wire-protocol.md v1
   generated with macOS ``say`` + ``afconvert``, cycling through harmless prompts that never
   ask for a device action, a purchase or a message;
 * it uploads the note with ``Authorization: Bearer <VESPER_NODE_TOKEN>`` (read from the
-  environment or ``~/.config/vesper-voice/node.env``, never printed) and ``X-Node-Id``;
+  environment or ``~/.config/vesper-voice/node.env``, never printed) and ``X-Node-Id``, plus
+  ``X-Node-Credential`` from ``VESPER_NODE_CREDENTIAL`` if set (task 08; never printed). The
+  node id must be registered (``vesper-node nodes list``), or the backend answers 403;
 * it prints each SSE event. The transcript and reply are printed to this client's own
   stdout; the server never logs them;
 * it resolves the relative ``audio_url`` against the turn URL, downloads the MP3 with the
@@ -83,11 +85,18 @@ def is_mp3(data: bytes) -> bool:
     return data[:3] == b"ID3" or (len(data) > 1 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
 
 
+def node_headers(token: str, node_id: str) -> dict[str, str]:
+    headers = {"Authorization": f"Bearer {token}", "X-Node-Id": node_id}
+    credential = os.environ.get("VESPER_NODE_CREDENTIAL")
+    if credential:
+        headers["X-Node-Credential"] = credential
+    return headers
+
+
 def one_turn(client: httpx.Client, base: str, token: str, node_id: str, note: bytes) -> dict:
     turn_url = base.rstrip("/") + "/turn"
     headers = {
-        "Authorization": f"Bearer {token}",
-        "X-Node-Id": node_id,
+        **node_headers(token, node_id),
         "X-Vesper-Node-Protocol": "1",
         "Content-Type": "audio/wav",
         "Accept": "text/event-stream",
@@ -128,7 +137,7 @@ def one_turn(client: httpx.Client, base: str, token: str, node_id: str, note: by
         result["ok"] = False
         return result
     t1 = time.monotonic()
-    audio = client.get(urljoin(turn_url, url), headers={"Authorization": f"Bearer {token}"})
+    audio = client.get(urljoin(turn_url, url), headers=node_headers(token, node_id))
     result["audio_fetch_s"] = time.monotonic() - t1
     result["mp3_bytes"] = len(audio.content)
     result["mp3_valid"] = audio.status_code == 200 and is_mp3(audio.content)

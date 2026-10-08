@@ -17,8 +17,10 @@ from conftest import (
     NODE_ID,
     NODE_TOKEN,
     REPLY,
+    ROOM,
     TRANSCRIPT,
     auth,
+    bearer,
     client_for,
     make_note,
     make_settings,
@@ -83,7 +85,11 @@ async def test_brain_request_contract(build, providers) -> None:
     (req,) = providers.calls["ask"]
     assert str(req.url) == "http://127.0.0.1:8790/ask"
     assert req.headers["authorization"] == f"Bearer {BRAIN_TOKEN}"
-    assert json.loads(req.content) == {"text": TRANSCRIPT, "device_id": NODE_ID, "channel": "node"}
+    assert json.loads(req.content) == {
+        "text": f"[Vesper node in the {ROOM}] {TRANSCRIPT}",
+        "device_id": NODE_ID,
+        "channel": "node",
+    }
     # the node token never leaves the backend
     for reqs in providers.calls.values():
         for r in reqs:
@@ -216,7 +222,7 @@ async def test_header_validation(build, providers, headers, status, code) -> Non
 async def test_missing_node_id(build) -> None:
     async with client_for(build()) as c:
         r = await c.post(
-            "/turn", content=make_note(), headers={**auth(), "Content-Type": "audio/wav"}
+            "/turn", content=make_note(), headers={**bearer(), "Content-Type": "audio/wav"}
         )
     assert (r.status_code, r.json()) == (400, {"error": "bad_node_id"})
 

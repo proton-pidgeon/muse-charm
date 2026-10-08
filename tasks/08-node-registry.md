@@ -7,14 +7,15 @@
 **Est. effort:** not stated in source
 
 ## Deliverables
-- [ ] Registry: `node_id` (`homelink-<mac>`) → room (`"kitchen"`, `"office"`, …) as backend config ("file or tiny admin endpoint")
-- [ ] **Decision recorded** on the credential model (conflict C2): per-node token vs one `VESPER_NODE_TOKEN` + node_id claim
-- [ ] Claim endpoint(s): node boots unclaimed → shows a short claim code → Kevin (or Vesper) claims it against the backend → backend issues the node credential
-- [ ] Turn handler looks up the room and prepends room context to the turn text; `node_id` passed as `/ask` `device_id`
+- [x] Registry: `node_id` (`homelink-<mac>`) → room (`"kitchen"`, `"office"`, …) as backend config ("file or tiny admin endpoint")
+- [x] **Decision recorded** on the credential model (conflict C2): per-node token vs one `VESPER_NODE_TOKEN` + node_id claim
+  > decided: shared edge bearer `VESPER_NODE_TOKEN` (unchanged for task 12) **plus** a per-node `X-Node-Credential` issued at claim time, hashed in the registry, revocable per node; see `docs/node-wire-protocol.md` *Credential model: decision*
+- [x] Claim endpoint(s): node boots unclaimed → shows a short claim code → Kevin (or Vesper) claims it against the backend → backend issues the node credential
+- [x] Turn handler looks up the room and prepends room context to the turn text; `node_id` passed as `/ask` `device_id`
 
 ## Definition of done
-- [ ] Tests: claim → credential issued → authenticated turn carries the right room context; an unclaimed or unknown node is rejected
-- [ ] Credential storage at 600 perms; no credential material in git or logs
+- [x] Tests: claim → credential issued → authenticated turn carries the right room context; an unclaimed or unknown node is rejected
+- [x] Credential storage at 600 perms; no credential material in git or logs
 
 ## Anti-deliverables (do NOT build in this task)
 - Firmware claim UI (task 11)

@@ -12,8 +12,9 @@ It mirrors ``vesper-voice/server/src/vesper_voice/brain_llm.py::BrainLLM.ask``:
 * logs carry status codes, exception class names, char counts and latency. They never carry
   the token, the request text or the reply.
 
-Task 08 hook: room context (node registry lookup) will be prepended to ``text`` here, before
-the POST. Not built in task 07.
+Room context (task 08): the caller prepends the node's registry room with
+:func:`with_room_context` before calling :meth:`BrainClient.ask`, so ``text`` here is already
+the final turn text.
 """
 
 from __future__ import annotations
@@ -29,6 +30,13 @@ log = logging.getLogger("vesper_node.brain")
 ASK_TIMEOUT_S = 30.0
 MAX_TEXT_CHARS = 1000  # brain_service.MAX_TEXT_CHARS
 NODE_CHANNEL = "node"
+
+
+def with_room_context(text: str, room: str | None) -> str:
+    """Prepend the node's room (registry value, operator-set and charset-restricted)."""
+    if not room:
+        return text
+    return f"[Vesper node in the {room}] {text}"
 
 
 class AskError(RuntimeError):
@@ -58,7 +66,6 @@ class BrainClient:
         )
 
     async def ask(self, text: str, *, node_id: str) -> Reply:
-        # TODO(task 08): prepend registry room context for node_id here.
         started = time.monotonic()
         try:
             resp = await self._client.post(
