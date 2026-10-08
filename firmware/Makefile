@@ -3,12 +3,14 @@
 #                                -Wall -Wextra -Werror), plus the log-hygiene check (no secret reaches a log)
 #   make -C firmware live-turn   one real turn against the running node backend (see hatch/test/live_turn.c)
 #   make -C firmware live-claim  the claim ceremony against a throwaway backend (see hatch/test/live_claim.sh)
+#   make -C firmware live-ota    the update check + download against a throwaway backend (hatch/test/live_ota.sh;
+#                                OTA_IMAGE=<build>/muse-gadget.bin publishes a real build, else a synthetic image)
 CC ?= cc
 BUILD ?= /tmp/muse-charm-firmware-test
 WARN = -std=c11 -Wall -Wextra -Werror -Wshadow -Wpointer-arith -Wcast-qual -Wstrict-prototypes -Wmissing-prototypes
 SAN = -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
 
-.PHONY: test log-hygiene live-turn live-claim clean
+.PHONY: test log-hygiene live-turn live-claim live-ota clean
 
 test: $(BUILD)/test_vesper_proto $(BUILD)/test_vesper_claim $(BUILD)/test_vesper_audio $(BUILD)/test_vesper_ota log-hygiene
 	$(BUILD)/test_vesper_proto
@@ -48,6 +50,13 @@ live-claim: $(BUILD)/live_claim
 $(BUILD)/live_claim: hatch/vesper_claim.c hatch/vesper_claim.h hatch/vesper_proto.c hatch/vesper_proto.h hatch/test/live_claim.c
 	@mkdir -p $(BUILD)
 	$(CC) $(WARN) $(SAN) -g -O1 -Ihatch hatch/vesper_claim.c hatch/vesper_proto.c hatch/test/live_claim.c -lcurl -o $@
+
+live-ota: $(BUILD)/live_ota
+	hatch/test/live_ota.sh $(BUILD)/live_ota $(OTA_IMAGE)
+
+$(BUILD)/live_ota: hatch/vesper_ota.c hatch/vesper_ota.h hatch/vesper_claim.c hatch/vesper_claim.h hatch/vesper_proto.c hatch/vesper_proto.h hatch/test/live_ota.c
+	@mkdir -p $(BUILD)
+	$(CC) $(WARN) $(SAN) -g -O1 -Ihatch hatch/vesper_ota.c hatch/vesper_claim.c hatch/vesper_proto.c hatch/test/live_ota.c -lcurl -o $@
 
 clean:
 	rm -rf $(BUILD)
