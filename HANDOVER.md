@@ -154,3 +154,37 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Wave 3: task 08 (B2 registry + claim endpoints) → ravenz-node; task 09 (F1 firmware backend) → Studio. Independent (08 needs 07 only; 09 needs 07's protocol only).
 - Credential model default for 08: per-node credential at claim, backend per-route validation; Peggy edge token (task 12) is the outer layer.
 - Remaining: 10 (dep 09), 11 (dep 08+09), 12 (HELD for Kevin), 13 (dep 09+12).
+
+## 2026-10-07: Task 09 (F1), Vesper `muse_hatch_*` backend built; Meta transport removed (impl/09-firmware-hatch-backend)
+- **Decision: patch set tracked in this repo, not a fork** (recorded in `firmware/README.md`). `firmware/apply-sdk.sh <SDK>` turns a pristine `b1a3822` checkout into the Vesper firmware, and re-running it changes nothing. It runs these steps:
+  1. Removes the files listed in `firmware/sdk-patches/delete.txt`.
+  2. Applies 3 `git apply` patches: build/Kconfig without `CONFIG_GADGET_SDK_TOKEN`; `app.c` reduced to Wi-Fi/OTA/identity/glue; backend selection and the `muse_settings` repurpose.
+  3. Copies `firmware/hatch/` into `components/muse/vesper/`, a path the SDK already ignores.
+  4. Installs the avatar.
+  5. Fails if `main/voice.c` changed.
+- **Deleted:** `vm_api`, `link_pairing`, `noise_control*`, `ble_server`, `muse_account_api`, `muse_chat_session.cpp` and `CONFIG_GADGET_SDK_TOKEN`. Also deleted is the code only those used: `noise_tunnel*`, `tunnel_netif`, `net_discovery`, `pairing_*`, `factory_test`, `bug_report`, `image_fetch`, `muse_chat_link.c` and `components/noise_core`. The image went from 2,166,784 to 1,839,104 bytes.
+  - `identity.c` must stay byte-identical, so it gets a `CONFIG_GADGET_SDK_TOKEN=""` compile definition. That definition is the only place the name still appears in the build.
+  - Only Muse PSRAM boards (AIPI) are supported now. Other profiles hit a clear `FATAL_ERROR`.
+- **Backend** (`firmware/hatch/muse_chat_vesper.c` + the pure-C `vesper_proto.c`):
+  - At the press it opens a chunked `POST <host>/turn` and streams the note while the button is held. The note is kept for the single 503 retry.
+  - Status mapping and captions come from `vp_http_verdict`.
+  - The SSE reply is parsed with bounded buffers and comment lines are skipped.
+  - Text deltas become captions. `message_done.audio_url` is resolved, relative references only, so the bearer stays on-server.
+  - The resolved URL goes to **`vesper_tts_slot_offer()`, the task-10 hook**. Its weak default declines, so captions are paced over silence as in stock firmware.
+  - `muse_voice.c` and all UI code are unchanged.
+- **Config:** NVS `muse:host` now holds the server base URL (≤63 chars). The new `muse:node_token` holds the bearer; the old `muse:token` is never read. The Kconfig fallbacks are empty.
+  - There is no BLE host until task 11. Provision over the serial console with `>wifi.ssid=`, `>wifi.pass=`, `>wifi.connect`, `>hatch.host=`, `>hatch.token=` and `>hatch.test`.
+- **Protocol doc:** added *Node firmware notes* (clarifications only, still v1). The most important note for the backend: keep each SSE event's `data` under 4 KiB.
+- **Verification (Studio, no board):**
+  - From a fresh `b1a3822` worktree, `apply-sdk.sh` then `board.sh build aipi` gives exit 0 with 0 compiler warnings. The only CMake warnings are the 2 generic IDF ones pristine also emits; pristine's SDK-token warning is gone.
+  - `compile_commands.json` and `.ninja_log` contain none of the deleted sources and no `noise_core`.
+  - The image contains no `mgst_` and no `metaaivm`.
+  - `git diff b1a3822 -- esp32/main/voice.c` is empty.
+  - The new and edited files are clean with an extra `-Wextra -Wshadow` pass.
+  - Simulator `ctest` passes 1/1.
+  - `make -C firmware test` passes 282 checks under ASan/UBSan with `-Werror`.
+  - `make -C backend verify` passes 101.
+  - **Live host turn:** `make -C firmware live-turn` sent a `say` note ("what is two plus two", 1.36 s, 16 kHz PCM16, streaming WAV header, chunked) to launchd `com.vesper.node` at `http://[::1]:8796` through the firmware's own header/SSE/URL code (libcurl standing in for `esp_http_client`). It heard "What is two plus two?" and captioned "Two plus two is four.", with the first caption 1.0–1.4 s after the upload started. `audio_url` resolved, and a bearer GET returned 200 and a 5.3 KB MP3. The token appeared 0 times in the output.
+- **HUMAN GATE (on-device DoD):** the board stays on Meta firmware until Kevin is ready. The exact steps are in `tasks/09-firmware-hatch-backend.md` and `firmware/README.md`: reach the backend, build, flash, provision over serial, run one PTT turn.
+  - Before task 12 the board can't reach the IPv6-only `::` bind over IPv4 LAN. Use a temporary `socat TCP4-LISTEN:8797,fork TCP6:[::1]:8796` on the Studio, or wait for Peggy `/vesper-node`.
+- SDK copies: `~/builds/muse-charm/scratch/sdk-impl-09` (the working copy) and `~/builds/muse-charm/scratch/sdk-impl-09-fresh` (the from-scratch proof, built). Both are detached worktrees of the untouched clone and can be removed with `git -C ~/builds/muse-charm/scratch/muse-gadget-sdk worktree remove --force <path>`.
