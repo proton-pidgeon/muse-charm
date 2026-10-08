@@ -33,6 +33,8 @@ over 6PN. **The backend's own routes have no `/vesper-node` prefix.**
 | `POST https://peggy.fly.dev/vesper-node/claim/start` | `POST /claim/start` | node bearer + `X-Node-Id` |
 | `POST https://peggy.fly.dev/vesper-node/claim/poll` | `POST /claim/poll` | node bearer + `X-Node-Id` + `X-Claim-Secret` |
 | `POST https://peggy.fly.dev/vesper-node/admin/claim` | `POST /admin/claim` | node bearer + admin token (route off unless `VESPER_NODE_ADMIN_TOKEN` is set) |
+| `GET https://peggy.fly.dev/vesper-node/firmware/manifest` | `GET /firmware/manifest` | node bearer + node credential (task 13) |
+| `GET https://peggy.fly.dev/vesper-node/firmware/{sha256}.bin` | `GET /firmware/{sha256}.bin` | node bearer + node credential (task 13) |
 | *(not routed by Peggy)* | `GET /healthz` | none. Returns `{"ok": true}` only, no detail. |
 
 The task text names the route `POST /vesper-node/turn`. That is the node-facing path. The
@@ -399,6 +401,79 @@ F3 ships:
 While the transition is on, anyone who holds `VESPER_NODE_TOKEN` can speak as that one node.
 That is exactly the pre-task-08 status quo, limited to one node id.
 
+## Firmware updates (task 13)
+
+The fleet runs one firmware: every node's image is identical, and only its NVS identity
+(Wi-Fi, server URL, bearer, node credential) differs. The operator publishes one image at a
+time on the Studio (`vesper-node firmware publish`, see *Operator: firmware*), and every
+claimed node picks it up. Both routes take the same auth as `/turn`: the shared bearer,
+`X-Node-Id` and the node's `X-Node-Credential` (`401`/`400`/`403 node_unauthorized`
+exactly as for `/turn`). A node also sends `X-Node-Firmware: <its version>`; the backend
+only logs it (sanitised).
+
+### `GET /firmware/manifest`
+
+- `204` (empty body): nothing is published. The node stays on what it runs.
+- `200 application/json`, `Cache-Control: no-store`:
+
+  ```json
+  {"version": "1.0.1", "sha256": "<64 lowercase hex>", "size": 2035712, "published_at": 1791500000}
+  ```
+
+  `version` is the image's own (`esp_app_desc_t.version`, from `firmware/hatch/VERSION`),
+  always `MAJOR.MINOR.PATCH`. `size` is the image's exact byte count and `sha256` the SHA-256
+  of all of it. Unknown fields are ignored.
+- `503 firmware_unavailable`: the store on the Studio is unreadable or fails its own checks.
+
+### `GET /firmware/{sha256}.bin`
+
+The published image, `200 application/octet-stream` with `Content-Length`. Only the
+currently published hash is served: any other name (another hash, upper case, a path, a
+traversal) is `404 not_found`. The backend re-hashes the file on every request and answers
+`503 firmware_unavailable` rather than send bytes that don't match. The node never takes a
+URL from the manifest; it builds this one from the hash, on its configured server.
+
+### What the node does (firmware side: `firmware/hatch/vesper_ota.c`, `main/ota.c`)
+
+- **When:** only once claimed and online, between turns, never while resting: 10 s after
+  boot, then every 6 hours plus a fixed per-node jitter of up to 30 minutes (from a hash of
+  the node id, so a fleet doesn't check at once), and at once on the serial console's
+  `>ota.check`. A failed check or install backs off from 1 minute, doubling, up to 6 hours.
+- **Only over https:** a node whose server URL is `http://` keeps working for turns but skips
+  update checks (`>status` shows `"update":"needs_https"`). The images are signed, but with
+  the SDK's public development key, so over plain http a path attacker could swap the
+  manifest and the image together.
+- **What it installs:** only a version strictly newer than the one it runs (never equal or
+  older), never a version that was already rolled back on this node, never one larger than its
+  update slot (4 MiB on the AIPI).
+- **How:** the SDK's `ota.c` (`ota_start_request`) streams the image into the other app slot
+  with the same headers and no redirects. It refuses the image unless its descriptor carries
+  exactly the manifest's version, exactly `size` bytes arrive, and the bytes written to the
+  slot hash to `sha256`. Only then does `esp_https_ota_finish()` verify the image itself (its
+  SHA-256 and RSA signature) and switch the boot partition. A turn in progress finishes before
+  the restart.
+- **Keeping it:** the new image boots `PENDING_VERIFY`. `app.c` marks it valid only once Wi-Fi
+  is up **and** this server has answered an update check made with the node's credential
+  (`200` or `204`) within 300 s. Otherwise the bootloader rolls back to the previous image,
+  which then never installs that version again. So an image that can't reach the server, or a
+  node that came back without its credential, is rolled back automatically. Nothing is
+  installed while the running image is itself still `PENDING_VERIFY`.
+
+## Operator: firmware
+
+```sh
+cd ~/builds/muse-charm/muse-charm/backend
+uv run --locked vesper-node firmware publish <SDK>/esp32/build-muse-aipi/muse-gadget.bin
+uv run --locked vesper-node firmware status
+uv run --locked vesper-node firmware withdraw     # stop a rollout: nodes see 204
+```
+
+The store is `~/.config/vesper-voice/firmware/` (mode 700, override
+`VESPER_NODE_FIRMWARE_DIR`). `publish` refuses anything that isn't an ESP32-S3 app image of the
+`muse-gadget` project with a `MAJOR.MINOR.PATCH` version, anything over 4 MiB, and (without
+`--force`) a version not newer than the one published. The running service sees a publish on
+its next request; no restart.
+
 ## Versioning
 
 - The current version is **1**. Every backend response carries `X-Vesper-Node-Protocol: 1`.
@@ -412,7 +487,7 @@ That is exactly the pre-task-08 status quo, limited to one node id.
   per-node shared-token transition.
 - **Breaking** changes bump the version: changing the request body shape, renaming or
   removing events or fields, changing the auth scheme. The backend should then serve both
-  versions until the fleet is OTA-updated (task 13).
+  versions until the fleet is OTA-updated (task 13, *Firmware updates*).
 - Task 09 (F1) may amend this doc while it implements the firmware side. Record any change in
   the changelog below.
 
@@ -531,3 +606,7 @@ of this changes the wire shape, so the version stays 1.
   the node runs the claim flow, which response values it accepts, its poll and backoff timing,
   where the code is shown, and re-claim on `403` (no refresh). These are clarifications only:
   task 08 defined the wire shape, so there is no version bump.
+- **v1, firmware updates (2026-10-08, task 13):** added `GET /firmware/manifest` and
+  `GET /firmware/{sha256}.bin` (same node auth as `/turn`), the `X-Node-Firmware` header, and
+  the *Firmware updates* and *Operator: firmware* sections. New routes only, so the version
+  stays 1 (see *Versioning*).
