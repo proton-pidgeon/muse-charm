@@ -115,6 +115,10 @@ int64_t vn_sched_wait_ms(const vn_sched_t *s, int64_t now_ms);
  * VN_RETRY_AFTER_MAX_MS).
  */
 void vn_sched_done(vn_sched_t *s, vn_verdict_t v, const char *retry_after, int64_t now_ms);
+/* A deferred list older than this is dropped, not said (the backend's audio TTL: 10 min). */
+#define VN_PENDING_MAX_MS (10 * 60 * 1000)
+/* True if fetched_ms is more than max_ms before now_ms (wrap-safe for int64). */
+bool vn_pending_stale(int64_t now_ms, int64_t fetched_ms, int64_t max_ms);
 
 #ifdef __cplusplus
 }

@@ -359,6 +359,18 @@ static void test_fuzz(void)
     }
 }
 
+static void test_pending_stale(void)
+{
+    int64_t m = VN_PENDING_MAX_MS;
+    CHECK(m == 600000);
+    CHECK(!vn_pending_stale(5000, 5000, m));
+    CHECK(!vn_pending_stale(5000 + m, 5000, m));      /* exactly the cap: still fresh */
+    CHECK(vn_pending_stale(5000 + m + 1, 5000, m));
+    CHECK(!vn_pending_stale(INT64_MAX, INT64_MAX - 1000, m));
+    CHECK(vn_pending_stale(INT64_MIN + 10, INT64_MAX - 10, 5));   /* across the int64 wrap */
+    CHECK(!vn_pending_stale(INT64_MIN + 10, INT64_MAX - 10, 100));
+}
+
 int main(void)
 {
     if (!vp_url_parse(BASE, &s_base)) {
@@ -376,6 +388,7 @@ int main(void)
     test_url();
     test_verdicts();
     test_schedule();
+    test_pending_stale();
     test_fuzz();
     if (s_fail) {
         fprintf(stderr, "test_vesper_announce: %d of %d checks FAILED\n", s_fail, s_checks);

@@ -207,3 +207,8 @@ void vn_sched_done(vn_sched_t *s, vn_verdict_t v, const char *retry_after, int64
     }
     s->next_ms = now_ms + delay;
 }
+
+bool vn_pending_stale(int64_t now_ms, int64_t fetched_ms, int64_t max_ms)
+{
+    return (int64_t)((uint64_t)now_ms - (uint64_t)fetched_ms) > max_ms;
+}

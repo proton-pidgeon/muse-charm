@@ -284,6 +284,7 @@ EXT_RAM_BSS_ATTR static char s_ann_body[VN_BODY_MAX];
 static uint32_t s_ann_played;        /* frames of s_ann_out played (the caption's clock) */
 static uint32_t s_ann_quiet;         /* silence chunks written since the last real audio */
 static vn_verdict_t s_ann_last = VN_OK;
+static int64_t s_ann_fetched_ms;     /* when s_ann_pending was set (age cap, VN_PENDING_MAX_MS) */
 static bool s_ann_pending;           /* s_ann holds announcements fetched (so already handed out) but not said yet */
 EXT_RAM_BSS_ATTR static char s_ann_shown[MUSE_CAPTION_MAX];   /* the caption announce_play last put up */
 
@@ -437,6 +438,7 @@ static void turn_finish(void)
         }
         s_ann_pending = vn_keep_from(&s_ann, first_queued) > 0;
         if (s_ann_pending) {
+            s_ann_fetched_ms = now_us() / 1000;
             ESP_LOGI(TAG, "announcements: %d not started yet; kept for the next idle moment", s_ann.n);
         }
         s_turn.announce = false;
@@ -860,7 +862,7 @@ static bool tts_open(int i)
     esp_http_client_config_t cfg = {
         .url = m->audio,
         .method = HTTP_METHOD_GET,
-        .timeout_ms = TTS_CONNECT_TIMEOUT_MS,
+        .timeout_ms = s_turn.announce ? ANN_CONNECT_TIMEOUT_MS : TTS_CONNECT_TIMEOUT_MS,
         .event_handler = on_tts_http_event,
         .buffer_size = 2048,
         .buffer_size_tx = VP_AUTH_MAX + 512,   /* the request line and headers, bearer included */
@@ -1736,6 +1738,10 @@ static void announce_step(void)
         return;   /* a press (or a setting) goes first */
     }
     turn_reset(atomic_load(&s_gen));
+    if (s_ann_pending && vn_pending_stale(now, s_ann_fetched_ms, VN_PENDING_MAX_MS)) {
+        announce_drop_pending("stale");
+        return;
+    }
     if (s_ann_pending) {
         /* Fetched earlier and deferred by a press: the server already handed them out, so say
          * them now, with no new GET (the poll schedule is untouched). Their MP3s may have
@@ -1790,6 +1796,7 @@ static void announce_step(void)
         memset(s_turn.auth, 0, sizeof(s_turn.auth));
         memset(s_turn.cred, 0, sizeof(s_turn.cred));
         s_ann_pending = true;
+        s_ann_fetched_ms = now_us() / 1000;
         return;
     }
     announce_start();   /* keeps the headers: the MP3 GETs need them; turn_finish wipes them */

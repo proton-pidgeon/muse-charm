@@ -819,15 +819,17 @@ node when they fall due. The node asks for them (`docs/node-wire-protocol.md`,
   **up to ~8 s after connecting if the backend is slow to answer** (the response timeout; the
   backend itself caps the poll at ~5 s: 3 s claim + 2 s speech, so ~5–6 s through Peggy is the
   realistic worst case, and ~0.5 s the usual one). A poll on a healthy LAN+Peggy path takes
-  well under a second, and nothing is polled unless the node is idle.
+  well under a second, and nothing is polled unless the node is idle. Each announcement MP3
+  open is likewise a short window (up to ~2 s, the same connect timeout) a press can't cut,
+  in addition to the GET.
 - **Deferred, not discarded:** the backend hands each announcement out only once, so the node
   never throws a fetched one away because of a press. A list fetched while a press landed is
   kept (`s_ann_pending`) and said at the next idle moment with no new GET; a list interrupted
   mid-way keeps the announcements not yet started (`vn_keep_from`, host-tested) and says them
   next time, while **the one that was mid-speech is dropped** (never repeat an alarm, never
-  talk over Kevin). Pending ones are dropped only if the server settings change or the node is
-  unclaimed. A kept one's MP3 may have expired by then (10 min TTL): its caption is then paced
-  over silence, as for a refused `audio_url`.
+  talk over Kevin). Pending ones are dropped only if the server settings change, the node is
+  unclaimed, or they are older than 10 minutes (`VN_PENDING_MAX_MS`, the backend's audio TTL;
+  `vn_pending_stale`, host-tested). An MP3 that expired anyway is paced over silence, as for a refused `audio_url`.
 - **Host checks:** `make -C firmware test` runs `test_vesper_announce` under ASan/UBSan: valid,
   empty, malformed, truncated and oversize bodies, bad entries, refused `audio_url`s, the 15 s /
   backoff / `Retry-After` schedule, what a press leaves pending (`vn_keep_from`), the JSON array
