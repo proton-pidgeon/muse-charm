@@ -473,7 +473,7 @@ def detect(
         prev_user, prev_reply = previous
         if not prev_user.strip() or _reported(prev_user) or is_device_command(prev_user):
             return None
-        reason = ex.reason.replace("the exchange", "the previous exchange")
+        reason = ex.reason.replace("the exchange", "the previous exchange: Vesper's answer")
         core = prev_user + " / " + prev_reply
         return Significance(EXPLICIT, reason, cap(prev_user), cap(prev_reply), core)
     # heuristic: tight patterns only, on a short, unambiguous utterance

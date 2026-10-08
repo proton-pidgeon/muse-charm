@@ -76,7 +76,7 @@ def test_bare_pointer_uses_previous_exchange(text: str) -> None:
     sig = detect(text, "Okay, saved.", previous=PREV)
     assert sig is not None and sig.kind == EXPLICIT
     assert (sig.user_text, sig.vesper_reply) == PREV  # the referenced single exchange
-    assert "previous exchange" in sig.reason
+    assert sig.reason.endswith("(pointing at the previous exchange: Vesper's answer)")
 
 
 def test_bare_pointer_without_previous_exchange_is_not_staged() -> None:
