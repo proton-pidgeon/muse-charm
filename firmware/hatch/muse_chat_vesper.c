@@ -1259,6 +1259,7 @@ static void claim_step(void)
     size_t len;
     claim_resp_t resp;
     int64_t t0 = now_us();
+    unsigned gen = vesper_cred_generation();   /* before the request: a forget from here on wins */
     int status = claim_post(a == VC_ACT_START ? "/claim/start" : "/claim/poll",
                             a == VC_ACT_POLL ? s_claim.secret : NULL, body, &len, &resp);
     int64_t now = now_us() / 1000;
@@ -1279,7 +1280,13 @@ static void claim_step(void)
     case VC_EV_CLAIMED: {
         char cred[VC_CRED_MAX + 1];
         vc_take_credential(&s_claim, cred);
-        unsigned gen = vesper_cred_generation();   /* before the store: see vesper_cred.c */
+        if (vesper_cred_generation() != gen) {
+            memset(cred, 0, sizeof(cred));
+            atomic_store(&s_claimed, false);
+            vc_reclaim(&s_claim, now_us() / 1000);
+            ESP_LOGW(TAG, "claim: forgotten while the claim request was in flight; claiming again");
+            break;
+        }
         bool saved = vesper_cred_store(cred);
         memset(cred, 0, sizeof(cred));
         /* Publish "claimed" only if no forget overlapped the store, and check again after

@@ -48,6 +48,10 @@ static char s_cred[VC_CRED_MAX + 1];   /* internal RAM */
  *     run(): no deadlock, because the NVS writer task never takes the mutex,
  *     so S finishes and releases it.
  *  6. Two forgets: serialised by the mutex; the second erase finds nothing.
+ *  7. F completes while S's claim request (claim_post, /claim/poll) is in
+ *     flight: claim_step reads the generation before the request, sees it
+ *     changed when the credential arrives, and drops it without storing, then
+ *     claims again.
  */
 static StaticSemaphore_t s_mutex_buf;
 static SemaphoreHandle_t s_mutex;
