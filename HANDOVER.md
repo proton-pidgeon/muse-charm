@@ -154,3 +154,8 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Wave 3: task 08 (B2 registry + claim endpoints) → ravenz-node; task 09 (F1 firmware backend) → Studio. Independent (08 needs 07 only; 09 needs 07's protocol only).
 - Credential model default for 08: per-node credential at claim, backend per-route validation; Peggy edge token (task 12) is the outer layer.
 - Remaining: 10 (dep 09), 11 (dep 08+09), 12 (HELD for Kevin), 13 (dep 09+12).
+
+## 2026-10-07 ~21:17 CDT — Task 08 BLOCKED on ravenz-node auth, rerouting
+- ravenz-node's Claude auth died mid-dispatch (OAuth expired, fleet creds = revoked). phylax heal --dry-run: no viable donor. Build never started; repo untouched.
+- Recovery needs browser reauth (parent capability) or Kevin's interactive /login. NOT build-blocking: task 08 reroutes to the Studio after task 09 (all remaining tasks are Studio-bound anyway).
+- Task 09 (F1 firmware) still running on Studio (valid).
