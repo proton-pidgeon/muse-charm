@@ -361,3 +361,9 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Live: stub-client "Remember this: the task seventeen live memory test ran on October eighth." → explicit candidate staged (id 9e2acdd2b2bd8b74). It's a TEST entry — Vesper should reject it. Temp node homelink-stubclient removed.
 - ATTENTION (for Kevin), see docs/node-memory-integration.md §8–9: (1) heuristics are ON (task said so; the spec's open Q1 had recommended explicit-only, so it's a one-line switch if you want that); (2) the node can't tell who's speaking, so candidates are marked unverified; (3) Vesper records decisions in a sidecar `node-candidates.decisions.jsonl`; (4) "remember that Charity hates mushrooms" is NOT staged (third-person attitude filter, privacy over recall); (5) quirk: in the live test Vesper's spoken reply echoed the injected session-summary context ("Earlier context: We were discussing Moby Dick…") and that reply text went into the candidate. Harmless, but the brain is reading the task-16 context prefix aloud.
 - HUMAN GATE: real-board PTT "remember this" on homelink-c86320.
+
+## 2026-10-08 ~17:35 CDT — Task 18 dispatched (node tool access, Option B)
+- Kevin picked Option B: prompt unlock (web/news/calendar/camera) + build timers, reminders, lists, weather.
+- Task file: tasks/18-node-tool-access.md. Spans vesper-voice (persona.py node channel, new brain tools) + muse-charm.
+- Board: issue #16, board #11 Todo, Summary="⚪ Node tool access (Option B): prompt unlock + timers/reminders/lists/weather".
+- Safety: shared device, never assume Kevin; irreversible stays refused.
