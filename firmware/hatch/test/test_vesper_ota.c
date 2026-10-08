@@ -162,8 +162,13 @@ static void test_headers(void)
     CHECK(!vo_headers(TOKEN, "homelink-c86320", "", "1.0.0", auth, h));
     CHECK(!vo_headers(TOKEN, "homelink-c86320", "vnc_short", "1.0.0", auth, h));
     CHECK(!vo_headers(TOKEN, "homelink-c86320", CRED "\r\n", "1.0.0", auth, h));
-    CHECK(!vo_headers(TOKEN, "homelink-c86320", CRED, "999.0.0-dirty", auth, h));
-    CHECK(!vo_headers(TOKEN, "homelink-c86320", CRED, "1.0.0\r\nX: y", auth, h));
+    /* A running version that isn't MAJOR.MINOR.PATCH (or could break the header) goes as "unknown". */
+    CHECK(vo_headers(TOKEN, "homelink-c86320", CRED, "999.0.0-dirty", auth, h));
+    CHECK_STR(h[3].value, "unknown");
+    CHECK(vo_headers(TOKEN, "homelink-c86320", CRED, "1.0.0\r\nX: y", auth, h));
+    CHECK_STR(h[3].value, "unknown");
+    CHECK(vo_headers(TOKEN, "homelink-c86320", CRED, NULL, auth, h));
+    CHECK_STR(h[3].value, "unknown");
 }
 
 static void test_verdicts(void)
@@ -200,6 +205,7 @@ static void test_verdicts(void)
     CHECK(!vo_channel_ok(VO_REFUSED) && !vo_channel_ok(VO_FAILED) && !vo_channel_ok(VO_BAD_MANIFEST));
     for (int v = VO_UP_TO_DATE; v <= VO_FAILED; v++) {
         CHECK(strcmp(vo_verdict_name((vo_verdict_t)v), "?") != 0);
+        CHECK(strcmp(vo_verdict_code((vo_verdict_t)v), "?") != 0 && !strchr(vo_verdict_code((vo_verdict_t)v), '"'));
     }
 }
 

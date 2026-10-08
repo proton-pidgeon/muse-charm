@@ -144,9 +144,11 @@ bool vo_headers(const char *token, const char *node_id, const char *credential, 
     vo_version_t v;
     memset(out, 0, sizeof(vp_header_t) * VO_HEADERS);
     auth_buf[0] = '\0';
-    if (!vp_valid_token(token) || !vp_valid_node_id(node_id) || !vc_valid_credential(credential) ||
-        !vo_version_parse(running_version, &v)) {
+    if (!vp_valid_token(token) || !vp_valid_node_id(node_id) || !vc_valid_credential(credential)) {
         return false;
+    }
+    if (!vo_version_parse(running_version, &v)) {
+        running_version = "unknown";
     }
     snprintf(auth_buf, VP_AUTH_MAX, "Bearer %s", token);
     out[0] = (vp_header_t){ "Authorization", auth_buf };
@@ -233,6 +235,31 @@ const char *vo_verdict_name(vo_verdict_t v)
         return "refused (token or node credential)";
     case VO_FAILED:
         return "no answer";
+    }
+    return "?";
+}
+
+const char *vo_verdict_code(vo_verdict_t v)
+{
+    switch (v) {
+    case VO_UP_TO_DATE:
+        return "up_to_date";
+    case VO_INSTALL:
+        return "newer";
+    case VO_SKIP_OLDER:
+        return "older";
+    case VO_SKIP_REJECTED:
+        return "rolled_back";
+    case VO_SKIP_TOO_BIG:
+        return "too_big";
+    case VO_SKIP_UNVERSIONED:
+        return "unversioned";
+    case VO_BAD_MANIFEST:
+        return "bad_manifest";
+    case VO_REFUSED:
+        return "refused";
+    case VO_FAILED:
+        return "no_answer";
     }
     return "?";
 }

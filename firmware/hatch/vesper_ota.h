@@ -96,8 +96,9 @@ bool vo_manifest_url(const vp_url_t *base, char *out, size_t cap);
 /*
  * The headers of both GETs, in order: Authorization (written into auth_buf,
  * VP_AUTH_MAX), X-Node-Id, X-Node-Credential, X-Node-Firmware. False (and
- * nothing usable) if the token, node id, credential or running version is
- * not well formed (the same header-injection-safe checks as the turns).
+ * nothing usable) if the token, node id or credential is not well formed (the
+ * same header-injection-safe checks as the turns). A running version that
+ * isn't MAJOR.MINOR.PATCH is sent as "unknown".
  */
 bool vo_headers(const char *token, const char *node_id, const char *credential, const char *running_version,
                 char auth_buf[VP_AUTH_MAX], vp_header_t out[VO_HEADERS]);
@@ -131,8 +132,9 @@ vo_verdict_t vo_check_result(int status, const char *body, size_t len, const cha
  * image must see before it is kept. */
 bool vo_channel_ok(vo_verdict_t v);
 
-/* A short, fixed name for logs and >status. */
+/* A short, fixed sentence for logs, and a one-word code for >status. */
 const char *vo_verdict_name(vo_verdict_t v);
+const char *vo_verdict_code(vo_verdict_t v);
 
 /* ---- When to check ---- */
 

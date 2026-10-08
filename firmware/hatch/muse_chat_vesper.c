@@ -44,6 +44,15 @@
  * claimed, so a press records a note to send once it is. Neither the
  * credential, the claim secret, the bearer nor the claim code is logged.
  *
+ * Firmware updates (task 13): between turns, a claimed node asks its server
+ * which firmware is published (GET /firmware/manifest, same bearer and
+ * credential), 10 s after boot and then every 6 hours, or at once on serial
+ * >ota.check. vesper_ota.c decides (strictly newer only, never a version
+ * that was rolled back here); the download, the size and SHA-256 checks and
+ * the install run on ota.c's own task through the installer app.c registers.
+ * A check the server answers is also what lets app.c keep a freshly
+ * installed image (vesper_node_update_channel_ok).
+ *
  * Everything network-side runs on one task. The voice task talks to it through
  * a command queue, a stream buffer of mic audio, an event queue (captions) and
  * a stream buffer of reply audio, exactly as with the stock backend. A
@@ -62,7 +71,9 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
@@ -79,6 +90,7 @@
 #include "vesper_ble.h"
 #include "vesper_claim.h"
 #include "vesper_cred.h"
+#include "vesper_ota.h"
 #include "vesper_proto.h"
 
 static const char *TAG = "vesper_chat";
@@ -138,6 +150,16 @@ static vc_claim_t s_claim;
 static atomic_bool s_claimed;
 static int64_t s_claim_shown_us;     /* when the claim caption was last put up */
 static char s_claim_caption[48];
+
+/* Firmware updates (task 13). s_ota is this task's; the atomics are shared with the OTA task
+ * (vesper_update_done) and the console (vesper_node_check_update). */
+static vo_sched_t s_ota;
+static char s_fw_version[VO_VERSION_MAX + 1];    /* the running image's */
+static char s_fw_rejected[VO_VERSION_MAX + 1];   /* a version rolled back on this node, or "" */
+static uint32_t s_fw_slot;                       /* the update slot's size */
+static vesper_updater_t s_updater;
+static atomic_bool s_ota_channel_ok, s_ota_installing, s_ota_failed, s_ota_check_now;
+static const char *volatile s_ota_status = "not_checked";   /* for >status: fixed strings only */
 
 /* ---- The current turn ---- */
 
@@ -1335,6 +1357,151 @@ static void unclaim(void)
     claim_show(true);
 }
 
+/* ---- Firmware updates (task 13) ---- */
+
+/* The headers of both firmware GETs (vesper_ota.h). The bearer goes into s_turn.auth and the
+ * credential into cred: the caller wipes both. False if the server URL, token or credential is
+ * unusable. */
+static bool ota_headers(vp_header_t h[VO_HEADERS], char cred[VC_CRED_MAX + 1])
+{
+    static char host[MUSE_HOST_MAX + 1];
+    static char token[MUSE_TOKEN_MAX + 1];
+    muse_settings_hatch_host(host);
+    muse_settings_hatch_token(token);
+    bool ok = vp_url_parse(host, &s_turn.base) && vesper_cred_get(cred) &&
+              vo_headers(token, s_node_id, cred, s_fw_version, s_turn.auth, h);
+    memset(token, 0, sizeof(token));
+    return ok;
+}
+
+/* GET <base>/firmware/manifest. The body goes into body (VO_BODY_MAX, NUL-terminated).
+ * Returns the HTTP status, 0 for no response, -1 if the configuration is unusable. */
+static int ota_get_manifest(char *body, size_t *len)
+{
+    char url[VP_URL_MAX];
+    char cred[VC_CRED_MAX + 1];
+    vp_header_t h[VO_HEADERS];
+    *len = 0;
+    body[0] = '\0';
+    bool ok = ota_headers(h, cred) && vo_manifest_url(&s_turn.base, url, sizeof(url));
+    int status = ok ? 0 : -1;
+    esp_http_client_handle_t c = NULL;
+    if (ok) {
+        esp_http_client_config_t cfg = {
+            .url = url,
+            .method = HTTP_METHOD_GET,
+            .timeout_ms = CONNECT_TIMEOUT_MS,
+            .buffer_size = 1024,
+            .buffer_size_tx = VP_AUTH_MAX + 512,   /* the request line and headers, bearer and credential included */
+            .disable_auto_redirect = true,         /* never carry them elsewhere */
+            .crt_bundle_attach = s_turn.base.https ? esp_crt_bundle_attach : NULL,
+        };
+        c = esp_http_client_init(&cfg);
+    }
+    if (c) {
+        for (int i = 0; i < VO_HEADERS; i++) {
+            esp_http_client_set_header(c, h[i].name, h[i].value);
+        }
+        if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0) {
+            status = esp_http_client_get_status_code(c);
+            while (*len < VO_BODY_MAX - 1) {
+                int n = esp_http_client_read(c, body + *len, (int)(VO_BODY_MAX - 1 - *len));
+                if (n <= 0) {
+                    break;
+                }
+                *len += (size_t)n;
+            }
+            body[*len] = '\0';
+        }
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);   /* frees its copies of the headers */
+    }
+    memset(cred, 0, sizeof(cred));
+    memset(s_turn.auth, 0, sizeof(s_turn.auth));
+    return status;
+}
+
+/* The installer's report (on ota.c's task, or on this one if it couldn't start). */
+static void vesper_update_done(bool applied, const char *detail)
+{
+    if (applied) {
+        s_ota_status = "restarting";
+        ESP_LOGI(TAG, "update: installed and verified; restarting into it once the node is idle");
+        /* A turn in progress finishes first (at most 2 minutes); ota.c restarts when this returns. */
+        for (int i = 0; i < 120 && muse_state_mode(NULL) != MUSE_MODE_IDLE; i++) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+        muse_state_set_caption("UPDATING - RESTARTING");
+        vTaskDelay(pdMS_TO_TICKS(300));
+        return;
+    }
+    s_ota_status = "install_failed";
+    ESP_LOGW(TAG, "update: not installed: %s", detail ? detail : "?");
+    atomic_store(&s_ota_failed, true);
+    atomic_store(&s_ota_installing, false);
+}
+
+/* One update check, if one is due and the node can reach its server. Only between turns. */
+static void ota_step(void)
+{
+    if (s_turn.phase != P_IDLE || atomic_load(&s_ota_installing)) {
+        return;
+    }
+    int64_t now = now_us() / 1000;
+    if (atomic_exchange(&s_ota_failed, false)) {
+        vo_sched_done(&s_ota, false, s_node_id, now);   /* the install failed: back off, then look again */
+    }
+    if (atomic_exchange(&s_ota_check_now, false)) {
+        vo_sched_now(&s_ota, now);
+    }
+    if (!vo_sched_due(&s_ota, now) || !atomic_load(&s_claimed) || !vesper_cred_present() ||
+        !muse_hatch_configured() || !muse_wifi_connected()) {
+        return;   /* not yet: the check stays due until the node is claimed and online */
+    }
+    static char body[VO_BODY_MAX];
+    size_t len;
+    int64_t t0 = now_us();
+    int status = ota_get_manifest(body, &len);
+    vo_manifest_t m = { 0 };
+    vo_verdict_t v = status < 0 ? VO_FAILED
+                                : vo_check_result(status, body, len, s_fw_version, s_fw_rejected, s_fw_slot, &m);
+    memset(body, 0, sizeof(body));
+    now = now_us() / 1000;
+    if (vo_channel_ok(v)) {
+        atomic_store(&s_ota_channel_ok, true);
+    }
+    s_ota_status = vo_verdict_code(v);
+    ESP_LOGI(TAG, "update check: %s (HTTP %d in %d ms; running %s%s%s)",
+             status < 0 ? "server URL, token or credential unusable" : vo_verdict_name(v), status,
+             (int)((now_us() - t0) / 1000), s_fw_version, m.version[0] ? ", published " : "", m.version);
+    if (v != VO_INSTALL) {
+        vo_sched_done(&s_ota, vo_channel_ok(v), s_node_id, now);
+        return;
+    }
+    char url[VP_URL_MAX];
+    char cred[VC_CRED_MAX + 1];
+    vp_header_t h[VO_HEADERS];
+    if (!s_updater || !ota_headers(h, cred) || !vo_image_url(&s_turn.base, &m, url, sizeof(url))) {
+        memset(cred, 0, sizeof(cred));
+        memset(s_turn.auth, 0, sizeof(s_turn.auth));
+        ESP_LOGW(TAG, "update: can't start (%s)", s_updater ? "configuration unusable" : "no installer");
+        vo_sched_done(&s_ota, false, s_node_id, now);
+        return;
+    }
+    ESP_LOGI(TAG, "update: installing %s (%u bytes) over %s; the node keeps working meanwhile", m.version,
+             (unsigned)m.size, s_fw_version);
+    s_ota_status = "installing";
+    atomic_store(&s_ota_installing, true);
+    /* A full period from now: if the install fails, done's report brings the next try forward. */
+    vo_sched_done(&s_ota, true, s_node_id, now);
+    vesper_update_t req = {
+        .url = url, .headers = h, .nheaders = VO_HEADERS, .version = m.version, .sha256 = m.sha256, .size = m.size,
+    };
+    s_updater(&req, vesper_update_done);   /* copies what it needs */
+    memset(cred, 0, sizeof(cred));
+    memset(s_turn.auth, 0, sizeof(s_turn.auth));
+}
+
 /* ---- Task ---- */
 
 static void handle(const cmd_t *cmd)
@@ -1412,6 +1579,7 @@ static void hatch_task(void *arg)
         }
         if (!atomic_load(&s_resting)) {
             claim_step();
+            ota_step();
         }
     }
 }
@@ -1474,6 +1642,20 @@ void muse_hatch_start(void)
     if (!s_node_id[0]) {
         ESP_LOGW(TAG, "no node id set; turns will be refused");
     }
+    /* Firmware updates (task 13): what runs, what was rolled back here, where an update goes.
+     * The flash reads happen here, on the boot task's internal-RAM stack. */
+    strlcpy(s_fw_version, esp_app_get_description()->version, sizeof(s_fw_version));
+    const esp_partition_t *bad = esp_ota_get_last_invalid_partition();
+    esp_app_desc_t bad_desc;
+    if (bad && esp_ota_get_partition_description(bad, &bad_desc) == ESP_OK) {
+        strlcpy(s_fw_rejected, bad_desc.version, sizeof(s_fw_rejected));
+    }
+    const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
+    s_fw_slot = next ? (uint32_t)next->size : 0;
+    vo_sched_init(&s_ota, now_us() / 1000);
+    ESP_LOGI(TAG, "firmware %s; updates from the node backend (first check %d s after the node is claimed and online)%s%s",
+             s_fw_version, VO_FIRST_CHECK_MS / 1000, s_fw_rejected[0] ? "; rolled back here before: " : "",
+             s_fw_rejected);
     /* Stack in PSRAM, like the stock session task: TLS and the MP3 decoder (~16 KB of scratch) run here. */
     if (!s_cmds || !s_events || !s_in || !s_out || !s_turn.note || !s_turn.chunk || !s_turn.texts ||
         xTaskCreatePinnedToCoreWithCaps(hatch_task, "muse_chat", 32 * 1024, NULL, 5, NULL, 0,
@@ -1517,9 +1699,28 @@ bool vesper_node_forget_credential_now(void)
 
 int vesper_node_status_json(char *out, size_t cap)
 {
-    /* Presence and state only: never the credential, the claim secret or the code. */
-    return snprintf(out, cap, "{\"node_id\":\"%s\",\"credential\":%s,\"claim\":\"%s\"}", s_node_id,
-                    vesper_cred_present() ? "true" : "false", vc_state_name(&s_claim));
+    /* Presence and state only: never the credential, the claim secret or the code. The firmware
+     * version is the image's own (MAJOR.MINOR.PATCH from firmware/hatch/VERSION). */
+    return snprintf(out, cap,
+                    "{\"node_id\":\"%s\",\"credential\":%s,\"claim\":\"%s\",\"firmware\":\"%s\",\"update\":\"%s\"}",
+                    s_node_id, vesper_cred_present() ? "true" : "false", vc_state_name(&s_claim),
+                    vo_version_parse(s_fw_version, &(vo_version_t){ 0 }) ? s_fw_version : "unknown", s_ota_status);
+}
+
+void vesper_node_set_updater(vesper_updater_t updater)
+{
+    s_updater = updater;
+}
+
+void vesper_node_check_update(void)
+{
+    atomic_store(&s_ota_check_now, true);
+    post(CMD_WAKE, 0);
+}
+
+bool vesper_node_update_channel_ok(void)
+{
+    return atomic_load(&s_ota_channel_ok);
 }
 
 void muse_hatch_turn_begin(void)
