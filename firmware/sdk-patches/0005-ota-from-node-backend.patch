@@ -183,11 +183,11 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
  #include "esp_crt_bundle.h"
 +#include "esp_ota_ops.h"
 +#include "esp_partition.h"
-+#include "psa/crypto.h"
++#include "mbedtls/private/sha256.h"
  #include "freertos/FreeRTOS.h"
  #include "freertos/task.h"
  
-@@ -56,8 +59,69 @@
+@@ -56,8 +59,67 @@
      bool force;
      ota_status_cb cb;
      void *user;
@@ -231,24 +231,22 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
 +
 +// SHA-256 of the first `size` bytes of `part` (what esp_https_ota wrote).
 +static bool slot_sha256_matches(const esp_partition_t *part, size_t size, const uint8_t want[32]) {
-+    psa_hash_operation_t op = PSA_HASH_OPERATION_INIT;
-+    if (psa_hash_setup(&op, PSA_ALG_SHA_256) != PSA_SUCCESS) return false;
++    // The legacy mbedtls SHA-256 API (hardware-accelerated; IDF's own core
++    // dump code uses it the same way).
++    mbedtls_sha256_context ctx;
++    mbedtls_sha256_init(&ctx);
++    bool ok = mbedtls_sha256_starts(&ctx, 0) == 0;
 +    static uint8_t buf[1024];   // only the one request-mode OTA task uses it
-+    for (size_t at = 0; at < size;) {
++    for (size_t at = 0; ok && at < size;) {
 +        size_t n = size - at > sizeof(buf) ? sizeof(buf) : size - at;
-+        if (esp_partition_read(part, at, buf, n) != ESP_OK ||
-+            psa_hash_update(&op, buf, n) != PSA_SUCCESS) {
-+            psa_hash_abort(&op);
-+            return false;
-+        }
++        ok = esp_partition_read(part, at, buf, n) == ESP_OK &&
++             mbedtls_sha256_update(&ctx, buf, n) == 0;
 +        at += n;
 +    }
 +    uint8_t got[32];
-+    size_t got_len = 0;
-+    if (psa_hash_finish(&op, got, sizeof(got), &got_len) != PSA_SUCCESS || got_len != 32) {
-+        psa_hash_abort(&op);
-+        return false;
-+    }
++    ok = ok && mbedtls_sha256_finish(&ctx, got) == 0;
++    mbedtls_sha256_free(&ctx);
++    if (!ok) return false;
 +    uint8_t diff = 0;
 +    for (int i = 0; i < 32; i++) diff |= got[i] ^ want[i];
 +    return diff == 0;
@@ -257,7 +255,7 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
  // Parse a leading "[v]MAJOR.MINOR.PATCH" into three components. Non-numeric
  // suffixes (e.g. git-describe "-15-gabc-dirty") are ignored.
  static void parse_ver(const char *s, long out[3]) {
-@@ -176,6 +240,29 @@
+@@ -176,6 +238,29 @@
      esp_https_ota_config_t ota_cfg = {
          .http_config = &http_cfg,
      };
@@ -287,7 +285,7 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
  
      esp_https_ota_handle_t handle = NULL;
      esp_err_t err = esp_https_ota_begin(&ota_cfg, &handle);
-@@ -200,6 +287,15 @@
+@@ -200,6 +285,15 @@
      memcpy(new_version, new_desc.version, sizeof(new_desc.version));
      new_version[sizeof(new_desc.version)] = '\0';
      ESP_LOGI(TAG, "incoming version=%s", new_version);
@@ -303,7 +301,7 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
  
      if (!ctx->force && !version_is_newer(new_version, running)) {
          ESP_LOGW(TAG, "skipping: %s not newer than %s", new_version, running);
-@@ -228,6 +324,29 @@
+@@ -228,6 +322,29 @@
          goto done;
      }
  
@@ -333,7 +331,7 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
      // finish() validates SHA-256 + signature (when enabled) and sets the boot
      // partition. Do NOT abort after calling finish.
      err = esp_https_ota_finish(handle);
-@@ -247,8 +366,7 @@
+@@ -247,8 +364,7 @@
      esp_restart();
  
  done:
@@ -343,7 +341,7 @@ diff --git a/esp32/main/ota.c b/esp32/main/ota.c
      stack_monitor_record(NULL);
      vTaskDelete(NULL);
  }
-@@ -285,8 +403,72 @@
+@@ -285,8 +401,72 @@
      }
  }
  
