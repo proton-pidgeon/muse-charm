@@ -978,6 +978,10 @@ void muse_pixel_scale(uint16_t *dst, int stride_px, int x0, int x1, int y0, int 
         return;
     }
     int n = x1 - x0 + 1;
+    /* A stride narrower than the strip would overlap rows (and the memcpy fast path with itself). */
+    if (stride_px < n) {
+        return;
+    }
     const uint8_t *xmap = &s_map[x0];
     const uint16_t *prev = NULL;
     uint8_t prev_m = 0;
