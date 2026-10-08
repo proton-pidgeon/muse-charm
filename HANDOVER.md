@@ -367,3 +367,10 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Task file: tasks/18-node-tool-access.md. Spans vesper-voice (persona.py node channel, new brain tools) + muse-charm.
 - Board: issue #16, board #11 Todo, Summary="⚪ Node tool access (Option B): prompt unlock + timers/reminders/lists/weather".
 - Safety: shared device, never assume Kevin; irreversible stays refused.
+
+## 2026-10-08 ~18:30 CDT — Task 18 (node tool access, Option B) GREEN, merged, LIVE
+- vesper-voice main 9ecf1d4 (merge 145973d): node persona unlock (web/news/calendar/camera) + shared-device rule; new household tools (timers, reminders, lists, Open-Meteo weather), node channel only, store `~/.config/vesper-voice/household.json`; `POST /node/announcements/claim`. Pre-existing 43 ruff findings cleared (make verify was lint-red on main).
+- muse-charm main f95e635: `GET /announcements` (node auth, brain claim 3 s, concurrent TTS 2 s budget, 429 under 5 s) + firmware 1.0.2 idle 15 s poll that speaks announcements (PTT wins; deferred, not dropped). Built (2,035,712 B), NOT published.
+- Review: GPT-5.5 → Fable blocked 18A (set_kev_location on the shared node; list_clear with only a model-set confirm) and 18B (announcements lost past the node's 5 s wait); fixed on the fable rung, deltas passed.
+- Live stub node: timer + reminder announced with MP3, at-most-once, 429 verified; lists/weather/news/web/calendar/camera answered; refusals held. Fixed live: the node reply had claimed to note "Kev is at Ravens" (store untouched); now says it can't update Kev's location from the speaker.
+- HUMAN GATE: real-board PTT per tool; publish 1.0.2 so the board can speak timers/reminders (needs the board claimed, task 13).
