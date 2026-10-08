@@ -568,13 +568,14 @@ static void flush_stage(bool all)
     }
 }
 
-static void read_error_body(char *code, size_t cap)
+/* The "error" code of a JSON error body (at most ERR_BODY_MAX bytes read) on http. */
+static void read_error_body(esp_http_client_handle_t http, char *code, size_t cap)
 {
     char body[ERR_BODY_MAX];
     int got = 0;
     code[0] = '\0';
     while (got < (int)sizeof(body) - 1) {
-        int n = esp_http_client_read(s_turn.http, body + got, (int)sizeof(body) - 1 - got);
+        int n = esp_http_client_read(http, body + got, (int)sizeof(body) - 1 - got);
         if (n <= 0) {
             break;
         }
@@ -595,7 +596,7 @@ static void await_status(void)
         s_turn.t_status = now_us();
         char code[VP_CODE_MAX] = "";
         if (status && status != 200) {
-            read_error_body(code, sizeof(code));
+            read_error_body(s_turn.http, code, sizeof(code));
         }
         int retry_ms = 0;
         char caption[EV_TEXT];
@@ -786,6 +787,17 @@ static bool tts_open(int i)
     if (err != ESP_OK || status != 200 || !type_ok || cl > TTS_MAX_BYTES) {
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "tts: connect failed: %s", esp_err_to_name(err));
+        }
+        if (status == 403) {
+            /* The credential stopped working between the turn and its audio: claim again now,
+             * one press sooner than the next /turn would. This clip is paced silently. */
+            char code[VP_CODE_MAX];
+            read_error_body(s_tts.http, code, sizeof(code));
+            if (vc_needs_claim(status, code)) {
+                ESP_LOGW(TAG, "tts: the node credential was refused; claiming again");
+                vc_reclaim(&s_claim, now_us() / 1000);
+                atomic_store(&s_claimed, false);
+            }
         }
         tts_stop();
         return false;
@@ -1257,6 +1269,12 @@ static void claim_step(void)
         vc_take_credential(&s_claim, cred);
         bool saved = vesper_cred_store(cred);
         memset(cred, 0, sizeof(cred));
+        if (!vesper_cred_present()) {
+            /* forgotten (setup reset) while it was being saved: claim again */
+            vc_reclaim(&s_claim, now_us() / 1000);
+            atomic_store(&s_claimed, false);
+            break;
+        }
         atomic_store(&s_claimed, true);
         ESP_LOGI(TAG, "claim: claimed%s%s; credential %s", s_claim.room[0] ? ", room " : "", s_claim.room,
                  saved ? "saved in NVS" : "NOT saved (kept until reboot)");

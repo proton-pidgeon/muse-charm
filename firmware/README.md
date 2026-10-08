@@ -184,7 +184,7 @@ model is task 08's (conflict C2): the shared edge bearer plus a per-node `X-Node
 
 - **When.** At boot the node loads `muse:node_cred`. With no credential (a fresh flash, a setup
   reset, `>claim.forget`) it claims as soon as the server URL and token are set and Wi-Fi is up.
-  A `403 node_unauthorized` on `/turn` sends a claimed node back to the claim flow too. The stored
+  A `403 node_unauthorized` on `/turn` or on an `/audio` GET (that clip is then paced silently) sends a claimed node back to the claim flow too. The stored
   credential stays in NVS until a new one replaces it, so a refusal that was only a blip costs a
   re-approval, never the node's identity.
 - **Start.** `POST <host>/claim/start` with the bearer and `X-Node-Id: homelink-<mac>`
@@ -214,6 +214,9 @@ model is task 08's (conflict C2): the shared edge bearer plus a per-node `X-Node
   and must not touch flash. The caption shows `CLAIMED - <room>`. From then on every `/turn` and
   every `/audio` GET carries `X-Node-Credential`. If the NVS write fails, the credential is used
   from RAM until the next reboot, and then the node claims again.
+  - Store and forget are serialised by a mutex in `vesper_cred.c`. A forget (setup reset,
+    `>claim.forget`) that arrives while a store is writing wins: the store undoes itself and
+    the node claims again. The NVS writer task never takes the mutex, so this can't deadlock.
 - **Turns before the claim.** `muse_hatch_ready()` is false until the node is claimed. On the
   AIPI a press still records the note (the stock held-notes path), and it is sent once the node
   is claimed.

@@ -282,6 +282,10 @@ static int run_auth(const char *token, const vp_url_t *base, const char *nvs_fil
     vp_header_t wa[3] = { wh[0], wh[1], wh[VP_TURN_HEADERS] };
     st = request("GET", audio_url, wa, 3, NULL, NULL, &r);
     ok &= expect("GET /audio/<unknown id> with a wrong credential", st, 403, err_of(&r, err), "node_unauthorized");
+    /* the firmware's tts_open makes the same call on an /audio 403 */
+    bool audio_reclaim = vc_needs_claim(st, err);
+    printf("    firmware verdict on the /audio 403: claim again: %s\n", audio_reclaim ? "yes" : "NO");
+    ok &= audio_reclaim;
 
     memset(cred, 0, sizeof(cred));
     memset(wrong, 0, sizeof(wrong));

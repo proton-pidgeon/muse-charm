@@ -31,7 +31,7 @@
 - [x] Device ID from `identity_node_id()` → `homelink-<mac>`
   - `X-Node-Id` on every claim, turn and audio request is `identity_node_id()`. `identity.c` is byte-identical.
 - [x] Refresh-on-401 pattern imitated from `app.c:860-935` if the credential model has refresh
-  - **Resolved: no refresh in this credential model.** Task 08 issues no refresh token and the credential doesn't expire. The equivalent is **re-claim on `403 node_unauthorized`** on `/turn` (`vc_needs_claim` → `vc_reclaim`). The old credential stays in NVS until a new one replaces it. A `401` is a wrong shared bearer, which no refresh could fix, so it stays `TOKEN REFUSED`.
+  - **Resolved: no refresh in this credential model.** Task 08 issues no refresh token and the credential doesn't expire. The equivalent is **re-claim on `403 node_unauthorized`** on `/turn` or `/audio` (`vc_needs_claim` → `vc_reclaim`). The old credential stays in NVS until a new one replaces it. A `401` is a wrong shared bearer, which no refresh could fix, so it stays `TOKEN REFUSED`.
 
 ## Definition of done
 - [ ] Fresh flash → claim code shown → claimed via backend → authenticated turns work after reboot

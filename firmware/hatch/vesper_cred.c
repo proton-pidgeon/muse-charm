@@ -6,10 +6,12 @@
  */
 #include "vesper_cred.h"
 
+#include <stdatomic.h>
 #include <string.h>
 
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs.h"
 
@@ -17,6 +19,28 @@ static const char *TAG = "vesper_cred";
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static char s_cred[VC_CRED_MAX + 1];   /* internal RAM */
+
+/*
+ * Store and forget run one at a time (s_mutex, held across the NVS write).
+ * A forget bumps s_forgets BEFORE it waits for the mutex, so a store already
+ * writing sees it when its write returns and undoes itself: a setup reset
+ * (forget, then restart) never leaves a credential behind. No deadlock: the
+ * NVS writer task never takes the mutex, so a store blocked in run() always
+ * finishes and releases it.
+ */
+static StaticSemaphore_t s_mutex_buf;
+static SemaphoreHandle_t s_mutex;
+static atomic_uint s_forgets;
+
+/* Created by vesper_cred_load() at boot, before any store or forget can run (the hatch
+ * task, the console and the setup reset all start later); static storage, so it can't fail. */
+static SemaphoreHandle_t mutex(void)
+{
+    if (!s_mutex) {
+        s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buf);
+    }
+    return s_mutex;
+}
 
 static void wipe(void *p, size_t n)
 {
@@ -38,6 +62,7 @@ static void set_ram(const char *value)
 
 void vesper_cred_load(void)
 {
+    mutex();   /* created here, before anything can store or forget */
     char buf[VC_CRED_MAX + 2];
     size_t n = sizeof(buf);
     nvs_handle_t h;
@@ -122,18 +147,30 @@ bool vesper_cred_store(const char *credential)
     if (!vc_valid_credential(credential)) {
         return false;
     }
+    xSemaphoreTake(mutex(), portMAX_DELAY);
+    unsigned gen = atomic_load(&s_forgets);
     set_ram(credential);
     esp_err_t err = run(credential);
-    if (err != ESP_OK) {
+    bool forgotten = atomic_load(&s_forgets) != gen;
+    if (forgotten) {
+        /* A forget (setup reset, >claim.forget) came in while this was being written: it wins. */
+        run(NULL);
+        set_ram(NULL);
+        ESP_LOGW(TAG, "node credential forgotten while it was being saved; not kept");
+    } else if (err != ESP_OK) {
         ESP_LOGE(TAG, "couldn't save the node credential: %s (kept until reboot)", esp_err_to_name(err));
     }
-    return err == ESP_OK;
+    xSemaphoreGive(mutex());
+    return err == ESP_OK && !forgotten;
 }
 
 bool vesper_cred_forget(void)
 {
+    atomic_fetch_add(&s_forgets, 1);   /* before the wait: a store in progress undoes itself */
+    xSemaphoreTake(mutex(), portMAX_DELAY);
     set_ram(NULL);
     esp_err_t err = run(NULL);
+    xSemaphoreGive(mutex());
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "couldn't erase the node credential: %s", esp_err_to_name(err));
     } else {

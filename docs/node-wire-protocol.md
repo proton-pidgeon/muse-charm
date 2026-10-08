@@ -480,7 +480,7 @@ of this changes the wire shape, so the version stays 1.
   (pure C, host-tested) and `muse_chat_vesper.c`:
   - **When.** A node with no credential in NVS `muse:node_cred` (fresh flash, setup reset,
     serial `>claim.forget`) claims once the server URL and bearer are set and Wi-Fi is up. A
-    `403 node_unauthorized` on `/turn` also sends a node back to the claim flow. Its old
+    `403 node_unauthorized` on `/turn` or on an `/audio` GET also sends a node back to the claim flow. Its old
     credential stays in NVS until the new one replaces it. Until it is claimed, the node
     starts no turns. On the AIPI a press still records the note, which is sent once the node is
     claimed.
