@@ -1232,7 +1232,19 @@ static void claim_show(bool force)
 /* One claim request, if one is due and the node can reach its server. Only between turns. */
 static void claim_step(void)
 {
-    if (s_turn.phase != P_IDLE || s_claim.state == VC_CLAIMED) {
+    if (s_turn.phase != P_IDLE) {
+        return;
+    }
+    if (s_claim.state == VC_CLAIMED) {
+        /* Reconcile: another task (the setup reset's forget-now) can erase the credential but
+         * not touch s_claim. Claimed with no credential means claim again, once, through the
+         * normal start/backoff path (vc_reclaim leaves VC_CLAIMED, so this can't repeat). */
+        if (!vesper_cred_present()) {
+            atomic_store(&s_claimed, false);
+            vc_reclaim(&s_claim, now_us() / 1000);
+            ESP_LOGI(TAG, "claim: no credential any more; claiming again");
+            claim_show(true);
+        }
         return;
     }
     if (!muse_hatch_configured() || !muse_wifi_connected()) {
@@ -1267,15 +1279,23 @@ static void claim_step(void)
     case VC_EV_CLAIMED: {
         char cred[VC_CRED_MAX + 1];
         vc_take_credential(&s_claim, cred);
+        unsigned gen = vesper_cred_generation();   /* before the store: see vesper_cred.c */
         bool saved = vesper_cred_store(cred);
         memset(cred, 0, sizeof(cred));
-        if (!vesper_cred_present()) {
-            /* forgotten (setup reset) while it was being saved: claim again */
-            vc_reclaim(&s_claim, now_us() / 1000);
+        /* Publish "claimed" only if no forget overlapped the store, and check again after
+         * publishing: a forget-now (setup reset) racing this either sees claimed and clears it
+         * after its erase, or bumped the generation first and is caught here. */
+        bool ours = vesper_cred_generation() == gen && vesper_cred_present();
+        if (ours) {
+            atomic_store(&s_claimed, true);
+            ours = vesper_cred_generation() == gen && vesper_cred_present();
+        }
+        if (!ours) {
             atomic_store(&s_claimed, false);
+            vc_reclaim(&s_claim, now_us() / 1000);   /* normal start/backoff path */
+            ESP_LOGW(TAG, "claim: the credential was forgotten while it was being saved; claiming again");
             break;
         }
-        atomic_store(&s_claimed, true);
         ESP_LOGI(TAG, "claim: claimed%s%s; credential %s", s_claim.room[0] ? ", room " : "", s_claim.room,
                  saved ? "saved in NVS" : "NOT saved (kept until reboot)");
         report_result(MUSE_HATCH_REACHABLE, "Claimed");
@@ -1468,7 +1488,8 @@ void muse_hatch_chat_forget(void)
 /* Turns need the node claimed too (task 11): until then a press records a note to send once it is. */
 bool muse_hatch_ready(void)
 {
-    return s_cmds && muse_hatch_configured() && muse_wifi_connected() && atomic_load(&s_claimed);
+    return s_cmds && muse_hatch_configured() && muse_wifi_connected() && atomic_load(&s_claimed) &&
+           vesper_cred_present();
 }
 
 void vesper_node_forget_credential(void)
@@ -1478,8 +1499,13 @@ void vesper_node_forget_credential(void)
 
 bool vesper_node_forget_credential_now(void)
 {
+    /* Cleared before (no new turn starts) and after the erase (a claim_step that published
+     * "claimed" in between is overridden). s_claim belongs to the hatch task, so it isn't touched
+     * here: claim_step reconciles "claimed but no credential" on its next pass. */
     atomic_store(&s_claimed, false);
-    return vesper_cred_forget();
+    bool ok = vesper_cred_forget();
+    atomic_store(&s_claimed, false);
+    return ok;
 }
 
 int vesper_node_status_json(char *out, size_t cap)

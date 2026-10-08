@@ -214,9 +214,13 @@ model is task 08's (conflict C2): the shared edge bearer plus a per-node `X-Node
   and must not touch flash. The caption shows `CLAIMED - <room>`. From then on every `/turn` and
   every `/audio` GET carries `X-Node-Credential`. If the NVS write fails, the credential is used
   from RAM until the next reboot, and then the node claims again.
-  - Store and forget are serialised by a mutex in `vesper_cred.c`. A forget (setup reset,
-    `>claim.forget`) that arrives while a store is writing wins: the store undoes itself and
-    the node claims again. The NVS writer task never takes the mutex, so this can't deadlock.
+  - Store and forget are serialised by a mutex in `vesper_cred.c`, and a forget always wins
+    over a store it overlaps. The forget bumps a generation before it waits for the mutex, and
+    the store samples it before it takes the mutex. `claim_step` publishes "claimed" only if
+    the generation is unchanged and the credential is still in RAM. It checks again after
+    publishing, and on its next pass it reconciles "claimed but no credential" into a normal
+    re-claim. `vesper_cred.c` lists the interleavings. The NVS writer task never takes the mutex,
+    so this can't deadlock.
 - **Turns before the claim.** `muse_hatch_ready()` is false until the node is claimed. On the
   AIPI a press still records the note (the stock held-notes path), and it is sent once the node
   is claimed.

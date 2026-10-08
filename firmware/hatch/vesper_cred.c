@@ -21,12 +21,33 @@ static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static char s_cred[VC_CRED_MAX + 1];   /* internal RAM */
 
 /*
- * Store and forget run one at a time (s_mutex, held across the NVS write).
- * A forget bumps s_forgets BEFORE it waits for the mutex, so a store already
- * writing sees it when its write returns and undoes itself: a setup reset
- * (forget, then restart) never leaves a credential behind. No deadlock: the
- * NVS writer task never takes the mutex, so a store blocked in run() always
- * finishes and releases it.
+ * Store and forget run one at a time (s_mutex, held across the NVS write),
+ * and a forget always wins over a store it overlaps.
+ *
+ * The rule: a forget bumps s_forgets BEFORE it waits for the mutex; a store
+ * samples s_forgets on entry, BEFORE it takes the mutex, and after its own
+ * write it compares. Any change means a forget was requested after the store
+ * began, so the store erases its own write, clears RAM and returns false.
+ *
+ * Interleavings considered (S = store on the hatch task, F = forget on the
+ * reset task or the hatch task; "gen" = s_forgets):
+ *  1. F completes, then S starts: S samples the bumped gen, nothing changes
+ *     during it, S keeps its credential. Correct: the forget came first.
+ *  2. S samples gen, F bumps gen and waits, S writes, sees the change, erases
+ *     and returns false; F then erases again (harmless). Nothing left.
+ *  3. F bumps gen, S samples AFTER the bump but before F gets the mutex, then
+ *     S takes the mutex first: S keeps its write, F then erases it. Nothing
+ *     left either, and S returned true. Its caller must therefore not trust
+ *     the return alone. claim_step compares vesper_cred_generation() from
+ *     before the store and checks vesper_cred_present() afterwards, then
+ *     re-checks after publishing "claimed". It also reconciles on its next
+ *     pass: claimed but no credential in RAM means claim again, through the
+ *     normal start/backoff path.
+ *  4. S takes the mutex before F bumps: same as 2.
+ *  5. F (forget-now from the setup reset) waits for the mutex while S is in
+ *     run(): no deadlock, because the NVS writer task never takes the mutex,
+ *     so S finishes and releases it.
+ *  6. Two forgets: serialised by the mutex; the second erase finds nothing.
  */
 static StaticSemaphore_t s_mutex_buf;
 static SemaphoreHandle_t s_mutex;
@@ -147,8 +168,13 @@ bool vesper_cred_store(const char *credential)
     if (!vc_valid_credential(credential)) {
         return false;
     }
+    unsigned gen = atomic_load(&s_forgets);   /* before the mutex: a forget requested from here on wins */
     xSemaphoreTake(mutex(), portMAX_DELAY);
-    unsigned gen = atomic_load(&s_forgets);
+    if (atomic_load(&s_forgets) != gen) {
+        xSemaphoreGive(mutex());   /* a forget overtook us while we waited: write nothing */
+        ESP_LOGW(TAG, "node credential forgotten before it was saved; not kept");
+        return false;
+    }
     set_ram(credential);
     esp_err_t err = run(credential);
     bool forgotten = atomic_load(&s_forgets) != gen;
@@ -162,6 +188,11 @@ bool vesper_cred_store(const char *credential)
     }
     xSemaphoreGive(mutex());
     return err == ESP_OK && !forgotten;
+}
+
+unsigned vesper_cred_generation(void)
+{
+    return atomic_load(&s_forgets);
 }
 
 bool vesper_cred_forget(void)

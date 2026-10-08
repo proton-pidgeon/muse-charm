@@ -34,8 +34,11 @@ bool vesper_cred_present(void);
 bool vesper_cred_get(char out[VC_CRED_MAX + 1]);
 /* Holds it in RAM and writes it to NVS. False if it isn't well-formed or NVS failed (RAM still has it). */
 bool vesper_cred_store(const char *credential);
-/* Wipes it from RAM and erases the NVS key. False if NVS failed. */
+/* Wipes it from RAM and erases the NVS key. False if NVS failed. A forget always wins over a store it overlaps. */
 bool vesper_cred_forget(void);
+/* Counts forgets (bumped as each forget is requested). A caller that read it before a store, and
+ * sees it changed after, must treat the credential as forgotten. See the interleavings in vesper_cred.c. */
+unsigned vesper_cred_generation(void);
 
 #ifdef __cplusplus
 }
