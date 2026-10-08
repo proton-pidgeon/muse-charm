@@ -117,3 +117,26 @@
 - Spec correction: UI draws the owl at 96px (1.5x) on the 128px panel, not exact 2x — UI untouched, as designed.
 - HUMAN GATE: board came up unpaired/Wi-Fi-wiped after the final flash (cause undetermined; pairing survived the earlier bench flash). Needs Kevin: re-pair in Muse app + one watched PTT turn to fully close task 05. Board issue #3 stays In Progress.
 - Task 07 (B1 backend) dispatched to Studio. Vesper firmware (09+) replaces Meta pairing with the claim flow, so the re-pair is task-05-closure only, not a build blocker.
+
+## 2026-10-07 ~20:47 CDT — Task 07 (B1): node backend built + live end to end (impl/07-node-backend-service)
+- **What:** `backend/` is a self-contained uv project (`vesper_node`, py3.12, FastAPI). It does not import `vesper_voice`; it mirrors that repo's patterns and cites the source files. The wire protocol is `docs/node-wire-protocol.md` v1, committed before any code (C1). Node-facing `POST /vesper-node/turn` maps to backend `POST /turn` after Peggy's strip_prefix. The body is a raw WAV note: 44-byte header + 16 kHz mono PCM16, and the firmware's `0xFFFFFFFF` sizes are accepted. The reply is SSE: `transcript` → `message_start` → `text_delta` → `message_done{audio_url}` → `timing` → `done`. `audio_url` is relative (`audio/<id>.mp3`) and bearer-gated, with a 144-bit id and a 10-minute in-memory TTL.
+- **Auth:** `VESPER_NODE_TOKEN` (48 chars, freshly generated) lives in the NEW file `~/.config/vesper-voice/node.env` (mode 600). A pure-ASGI middleware checks it with `hmac.compare_digest` before any body byte is read. A test proves `receive` is never called on a 401. The node token is never forwarded; `/ask` uses `VESPER_BRAIN_TOKEN` with `{"text", "device_id": node_id, "channel": "node"}`.
+- **Providers:** STT is ElevenLabs **Scribe v2 batch** (`/v1/speech-to-text`, `model_id=scribe_v2`, `file_format=pcm_s16le_16`). Realtime is the wrong fit for a whole uploaded note. Deepgram Nova-3 prerecorded is the alternate/fallback, but only when `DEEPGRAM_API_KEY` is set. The Studio has no Deepgram key, so the fallback is unit-tested only. TTS uses the phone brain's voice (`VESPER_PHONE_TTS_VOICE_ID`, `eleven_flash_v2_5`, `mp3_22050_32`, 4 s timeout, LRU + in-flight dedup). `VESPER_NODE_TTS=off` is the kill switch.
+- **Transcripts transient (Q4):** logs carry only node id, counts, latencies, provider and status. Tests assert transcript/reply/token text never reaches captured logs. The live server log was grepped after 6 real turns: 0 hits for any prompt/reply word or the token.
+- **Bind:** `VESPER_NODE_HOST=::` (6PN + `[::1]`; `127.0.0.1` is NOT served, same as the brain), `VESPER_NODE_PORT=8796`. Concurrency is capped at 2 turns (503 `busy` + Retry-After). The body cap is 512 KiB (≈16.4 s), enforced while streaming.
+- **Verify:** `make -C backend verify` (keyless, all providers mocked, 96 tests + ruff + plist lint). `make -C backend verify-live STUB_ARGS="--turns 5"` runs the stub client against a running backend.
+- **launchd:** template `backend/launchd/com.vesper.node.plist`, installed by `make -C backend install-launchd` (render + bootout/bootstrap; logs in `~/Library/Logs/vesper-node/`). The mechanism was proven with a throwaway `com.vesper.node.selftest` on :8797: bootstrap → healthz OK → `kickstart -k` (new pid) → healthz OK → killed pid → KeepAlive respawn in ~11 s → bootout + plist removed. **The real `com.vesper.node` is NOT installed yet. Orchestrator: install it from the main checkout after merge (`make -C backend install && make -C backend install-launchd`).**
+- **Live DoD:** the stub client ran on Kev's Mac Studio against real ElevenLabs + the live brain (`http://[::1]:8795`), with harmless prompts only (two plus two, owl fact, capital of France, days in a week, moon fact). Every turn returned text plus a valid MP3. Without a token or with a wrong one, `/turn` and `/audio` returned 401.
+
+**Real-provider latency, 2026-10-07, Mac Studio, 5 turns.** STT `scribe_v2` batch, brain `/ask` channel=node, TTS `eleven_flash_v2_5` in the phone voice, backend on `[::1]:8796`. Notes were 1.7–2.8 s of `say` speech.
+
+| Stage | median | p90 | min | max |
+|---|---|---|---|---|
+| STT (Scribe v2 batch) | 0.41 s | 0.63 s | 0.36 s | 0.63 s |
+| `/ask` (brain, node channel) | 0.61 s | 0.79 s | 0.54 s | 0.79 s |
+| TTS (flash v2.5, cache miss) | 0.31 s | 0.47 s | 0.15 s | 0.47 s |
+| **Server total** (upload→`message_done`) | **1.45 s** | 1.59 s | 1.29 s | 1.59 s |
+| Client: first caption text | 1.14 s | 1.20 s | 0.99 s | 1.20 s |
+| Client: MP3 GET (loopback) | <0.01 s | | | |
+
+Against the documented baselines (loopback mock pipeline 0.66 s median; phone turn ~3–6 s), a node turn is ≈1.5 s from release to playable MP3 before network/Peggy hops. The caption arrives ≈0.3 s before the audio because the text is streamed before TTS. These are chat-only prompts, so turns that call Lobe tools will add brain time.
