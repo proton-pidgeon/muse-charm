@@ -14,12 +14,22 @@
 
 /* ---- Resampler ---- */
 
-static double blackman(double t)
+/* The table is built in single precision: the S3's FPU has no double, and Q15 needs far less. */
+static const float PI_F = 3.14159265f;
+
+static float blackman(float t)
 {
     /* t in [-RS_DELAY, RS_DELAY] */
-    const double pi = 3.14159265358979323846;
-    double x = pi * t / RS_DELAY;
-    return 0.42 + 0.5 * cos(x) + 0.08 * cos(2.0 * x);
+    float x = PI_F * t / RS_DELAY;
+    return 0.42f + 0.5f * cosf(x) + 0.08f * cosf(2.0f * x);
+}
+
+void va_rs_reset(va_resampler_t *r)
+{
+    memset(r->hist, 0, sizeof(r->hist));
+    r->hpos = 0;
+    r->r = 0;
+    r->lag = RS_DELAY + 1;   /* output 0 (time 0) needs input RS_DELAY as its newest sample */
 }
 
 bool va_rs_init(va_resampler_t *r, uint32_t in_rate, uint32_t out_rate)
@@ -32,28 +42,28 @@ bool va_rs_init(va_resampler_t *r, uint32_t in_rate, uint32_t out_rate)
     r->in_rate = in_rate;
     r->out_rate = out_rate;
     r->bypass = in_rate == out_rate;
-    r->lag = RS_DELAY + 1;   /* output 0 (time 0) needs input RS_DELAY as its newest sample */
+    va_rs_reset(r);
     if (r->bypass) {
         return true;
     }
-    const double pi = 3.14159265358979323846;
     /* cutoff in cycles per input sample: 0.45 of the lower rate's band */
-    double fc = 0.45 * (double)(in_rate < out_rate ? in_rate : out_rate) / (double)in_rate;
+    float fc = 0.45f * (float)(in_rate < out_rate ? in_rate : out_rate) / (float)in_rate;
     for (int p = 0; p < VA_RS_PHASES; p++) {
-        double f = (p + 0.5) / VA_RS_PHASES;   /* the middle of the phase's fractional delays */
-        double g[VA_RS_TAPS], sum = 0;
+        float f = (p + 0.5f) / VA_RS_PHASES;   /* the middle of the phase's fractional delays */
+        float g[VA_RS_TAPS], sum = 0;
         for (int m = 0; m < VA_RS_TAPS; m++) {
             /* tap m is input j - m; the output time is j - RS_DELAY + f, so their distance is m - RS_DELAY + f */
-            double t = m - RS_DELAY + f;
-            double x = 2.0 * pi * fc * t;
-            double sinc = fabs(x) < 1e-9 ? 1.0 : sin(x) / x;
-            g[m] = 2.0 * fc * sinc * blackman(t);
+            float t = (float)(m - RS_DELAY) + f;
+            float x = 2.0f * PI_F * fc * t;
+            float sinc = fabsf(x) < 1e-6f ? 1.0f : sinf(x) / x;
+            g[m] = 2.0f * fc * sinc * blackman(t);
             sum += g[m];
         }
-        int32_t total = 0, peak = 0;
+        int32_t total = 0;
+        int peak = 0;
         for (int m = 0; m < VA_RS_TAPS; m++) {
-            double c = g[m] / sum * 32768.0;
-            int32_t q = (int32_t)(c < 0 ? c - 0.5 : c + 0.5);
+            float c = g[m] / sum * 32768.0f;
+            int32_t q = (int32_t)(c < 0 ? c - 0.5f : c + 0.5f);
             r->coef[p][m] = (int16_t)q;
             total += q;
             if (q > r->coef[p][peak]) {

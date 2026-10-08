@@ -9,7 +9,7 @@
  * project; not derived from the Meta muse-gadget-sdk sources.
  *
  * Pure C: only <stddef.h>, <stdint.h>, <stdbool.h>, <string.h>, <math.h>
- * (the resampler's table is built with sin/cos once per sample rate), so the
+ * (the resampler's table is built with sinf/cosf once per sample rate), so the
  * same code runs on the ESP32-S3 and in the host tests
  * (firmware/hatch/test/test_vesper_audio.c). No allocation, no recursion.
  */
@@ -52,6 +52,10 @@ typedef struct {
 
 /* False (and r unusable) unless both rates are in [VA_RS_RATE_MIN, VA_RS_RATE_MAX]. */
 bool va_rs_init(va_resampler_t *r, uint32_t in_rate, uint32_t out_rate);
+
+/* Starts a new stream at the same rates, keeping the coefficient table
+ * (va_rs_init builds it: ~6k sinf/cosf, a few ms on the S3). */
+void va_rs_reset(va_resampler_t *r);
 
 /* The most samples va_rs_process can write for n inputs (and va_rs_flush for n = 0). */
 size_t va_rs_max_out(const va_resampler_t *r, size_t n);

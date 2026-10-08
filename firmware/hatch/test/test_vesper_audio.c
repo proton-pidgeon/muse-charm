@@ -141,6 +141,24 @@ static void test_rates(void)
     }
 }
 
+/* va_rs_reset starts a new stream: the same samples as a fresh init */
+static void test_reset(void)
+{
+    const size_t N = 5000;
+    int16_t *x = tone(N, 700, 22050, 9000);
+    int16_t *a = malloc(2 * N * sizeof(int16_t)), *b = malloc(2 * N * sizeof(int16_t));
+    CHECK(va_rs_init(&s_rs, 22050, 16000));
+    size_t na = va_rs_process(&s_rs, x, N, a);
+    na += va_rs_flush(&s_rs, a + na);
+    va_rs_reset(&s_rs);
+    size_t nb = va_rs_process(&s_rs, x, N, b);
+    nb += va_rs_flush(&s_rs, b + nb);
+    CHECK(na == nb && memcmp(a, b, na * sizeof(int16_t)) == 0);
+    free(x);
+    free(a);
+    free(b);
+}
+
 static void test_bypass(void)
 {
     int16_t x[500], y[500];
@@ -393,6 +411,7 @@ int main(void)
 {
     test_rates();
     test_bypass();
+    test_reset();
     test_22050_to_16000();
     test_other_rates();
     test_mp3buf();
