@@ -39,6 +39,13 @@ office" updates the registry and is confirmed locally, no brain call) -> session
 (idle > 15 min: compress the old transcript into an extractive summary, no brain call) ->
 ``/ask`` with room + history
 -> record the exchange -> TTS.
+
+Long-term memory (task 17, :mod:`vesper_node.candidates`): after a turn has finished (its
+``done`` event is queued and its slot released), a background task judges the exchange with
+deterministic patterns in a worker thread and, if it is significant ("remember that …"),
+appends one candidate line to ``~/memory/node-candidates.jsonl`` for Vesper to review. That
+path adds no latency to the turn, cannot fail it, never calls the brain and never reads
+curated memory. Room-assignment turns and failed turns are never considered.
 """
 
 from __future__ import annotations
@@ -61,6 +68,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import logsafe
 from .brain import MAX_TEXT_CHARS, AskError, BrainClient, with_room_context
+from .candidates import CandidateQueue
 from .config import ConfigError, Settings, load_settings
 from .conversation import (
     HISTORY_BUDGET,
@@ -289,6 +297,7 @@ def create_app(
     registry: Registry | None = None,
     firmware: FirmwareStore | None = None,
     conversations: ConversationStore | None = None,
+    candidates: CandidateQueue | None = None,
 ) -> BearerAuth:
     """Build the ASGI app (FastAPI wrapped in :class:`BearerAuth`). Transports are for tests."""
     if registry is None:
@@ -302,6 +311,8 @@ def create_app(
             settings.memory_file, idle_s=settings.session_idle_minutes * 60
         )
     memory = conversations
+    if candidates is None:
+        candidates = CandidateQueue(settings.candidates_file)
     stt = STT(
         chain=[(p, settings.stt_key(p) or "") for p in settings.stt_chain()],
         language=settings.stt_language,
@@ -328,12 +339,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         log.info(
-            "vesper-node up: stt=%s tts=%s max_concurrent=%d memory=%s idle_s=%d",
+            "vesper-node up: stt=%s tts=%s max_concurrent=%d memory=%s idle_s=%d candidates=%s",
             ",".join(stt.providers),
             "on" if tts.enabled else "off",
             max_concurrent,
             "file" if memory.path else "ram",
             memory.idle_s,
+            "file" if candidates.path else "ram",
         )
         yield
         for task in list(tasks):
@@ -351,6 +363,8 @@ def create_app(
     app.state.tts = tts  # tests + ops
     app.state.turn_state = state
     app.state.conversations = memory
+    app.state.candidates = candidates
+    app.state.background = tasks  # turn tasks + memory-candidate tasks (tests)
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -394,6 +408,27 @@ def create_app(
             current = await memory.get(node_id)
             await save_memory(node_id, memory.append(current, user, reply, memory.clock()))
 
+    async def stage_candidate(
+        node_id: str, room: str | None, user: str, reply: str, previous: tuple[str, str] | None
+    ) -> None:
+        """Task 17: judge + stage off the turn path, in a worker thread. Never raises."""
+        try:
+            await asyncio.to_thread(
+                candidates.consider,
+                node_id=node_id,
+                room=room,
+                user_text=user,
+                vesper_reply=reply,
+                previous=previous,
+            )
+        except Exception as e:  # noqa: BLE001 - a memory candidate must never matter to a turn
+            log.error("memory candidate failed: node=%s reason=%s", node_id, type(e).__name__)
+
+    def schedule_candidate(*args: Any) -> None:
+        task = asyncio.create_task(stage_candidate(*args), name="memory-candidate")
+        tasks.add(task)
+        task.add_done_callback(tasks.discard)
+
     async def assign_room(node: NodeAuth, room: str | None) -> bool:
         """Update the registry room. False only if the registry write failed."""
         if room is None:
@@ -423,6 +458,7 @@ def create_app(
         }
         ok, code = False, None
         mem_info = "-"  # log-only: history turns sent / "room" / "idle"
+        exchange: tuple[str, str, tuple[str, str] | None] | None = None  # task 17
 
         def emit(event: str, data: dict[str, Any]) -> None:
             q.put_nowait(sse(event, data))
@@ -499,6 +535,8 @@ def create_app(
             await remember(node_id, heard.text, reply.text)
             await speak(reply.text)
             ok = True
+            previous = (history.turns[-1].user, history.turns[-1].reply) if history.turns else None
+            exchange = (heard.text, reply.text, previous)
         except asyncio.CancelledError:
             code = "cancelled"
             raise
@@ -511,6 +549,8 @@ def create_app(
             emit("done", {"ok": ok})
             q.put_nowait(None)
             release()
+            if ok and exchange is not None:  # after the turn: zero added latency
+                schedule_candidate(node_id, node.room, *exchange)
             log.info(
                 "turn done: node=%s room=%s auth=%s ok=%s code=%s memory=%s audio_ms=%d "
                 "upload_ms=%s stt_ms=%s ask_ms=%s tts_ms=%s total_ms=%s provider=%s",
@@ -798,6 +838,7 @@ def check_config() -> int:
     print(f"  published: {published.version if published else 'none'}")
     print(f"node memory: {s.memory_file} (VESPER_NODE_MEMORY_FILE)")
     print(f"  session idle: {s.session_idle_minutes} min (VESPER_NODE_SESSION_IDLE_MINUTES)")
+    print(f"memory candidates: {s.candidates_file} (VESPER_NODE_CANDIDATES_FILE)")
     print(
         "admin claim route: "
         + ("on (VESPER_NODE_ADMIN_TOKEN)" if s.admin_token else "off (CLI approval only)")

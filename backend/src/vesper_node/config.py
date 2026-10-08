@@ -17,6 +17,9 @@ Resolution order for every key: process environment, then the **node** env file
   default ``~/.config/vesper-voice/firmware``.
 * ``VESPER_NODE_MEMORY_FILE`` (optional) moves the per-node conversation memory (task 16)
   from its default ``~/.config/vesper-voice/node-memory.json``.
+* ``VESPER_NODE_CANDIDATES_FILE`` (optional) moves the long-term memory candidate queue
+  (task 17) from its default ``~/memory/node-candidates.jsonl``. The backend only appends to
+  it; Vesper reviews it (``docs/node-memory-integration.md``).
 * ``VESPER_NODE_SESSION_IDLE_MINUTES`` (optional, default 15, 1-1440) is the idle gap after
   which a node's transcript is compressed into a session summary (task 16).
 * Provider and brain keys (``ELEVENLABS_API_KEY``, ``DEEPGRAM_API_KEY``,
@@ -51,6 +54,8 @@ FIRMWARE_DIR_VAR = "VESPER_NODE_FIRMWARE_DIR"
 DEFAULT_FIRMWARE_DIR = Path("~/.config/vesper-voice/firmware")
 MEMORY_FILE_VAR = "VESPER_NODE_MEMORY_FILE"
 DEFAULT_MEMORY_FILE = Path("~/.config/vesper-voice/node-memory.json")
+CANDIDATES_FILE_VAR = "VESPER_NODE_CANDIDATES_FILE"
+DEFAULT_CANDIDATES_FILE = Path("~/memory/node-candidates.jsonl")
 SESSION_IDLE_VAR = "VESPER_NODE_SESSION_IDLE_MINUTES"
 DEFAULT_SESSION_IDLE_MINUTES = 15
 
@@ -189,6 +194,9 @@ class Settings:
     # then keeps memory in RAM only, unless it is given a store.
     memory_file: str | None = None
     session_idle_minutes: int = DEFAULT_SESSION_IDLE_MINUTES
+    # Long-term memory candidate queue (task 17). None in hand-built test settings: create_app
+    # then keeps candidates in RAM only, unless it is given a queue.
+    candidates_file: str | None = None
     admin_token: str | None = None
     env_files: tuple[str, ...] = field(default=())
 
@@ -286,6 +294,7 @@ def load_settings(
         firmware_dir=str(Path(get(FIRMWARE_DIR_VAR) or DEFAULT_FIRMWARE_DIR).expanduser()),
         memory_file=str(Path(get(MEMORY_FILE_VAR) or DEFAULT_MEMORY_FILE).expanduser()),
         session_idle_minutes=_idle_minutes(get(SESSION_IDLE_VAR)),
+        candidates_file=str(Path(get(CANDIDATES_FILE_VAR) or DEFAULT_CANDIDATES_FILE).expanduser()),
         admin_token=admin_token,
         env_files=(str(node_path), str(voice_path)),
     )

@@ -31,12 +31,12 @@
 - Document (in the spec file) the review contract: Vesper checks the queue on her normal cadence, dedups via `muse.memory_search`, writes to `MEMORY.md`/daily notes, marks candidates reviewed/rejected with reasons. No code needed on the agent side in this task — the contract documentation is the deliverable.
 
 ## Definition of done
-- [ ] Significance detection: explicit triggers ("remember this") always queue; conservative heuristics queue durable facts; small talk/transient/ambiguous never queue (tests as proof)
-- [ ] Candidate queue: append-only JSONL at `~/memory/node-candidates.jsonl`, mode 600, correct schema, dedupe_key present
-- [ ] Async: significance judging adds zero latency to the turn path (test or measurement as proof)
-- [ ] Safety: no memory-path code path can invoke home-control or any other action (reviewer-verified)
-- [ ] Privacy: no audio, no full transcripts, no third-party statements in candidates (tests as proof)
-- [ ] Review contract documented in `docs/node-memory-integration.md`
+- [x] Significance detection: explicit triggers ("remember this") always queue; conservative heuristics queue durable facts; small talk/transient/ambiguous never queue (tests as proof)
+- [x] Candidate queue: append-only JSONL at `~/memory/node-candidates.jsonl`, mode 600, correct schema, dedupe_key present
+- [x] Async: significance judging adds zero latency to the turn path (test or measurement as proof)
+- [x] Safety: no memory-path code path can invoke home-control or any other action (reviewer-verified)
+- [x] Privacy: no audio, no full transcripts, no third-party statements in candidates (tests as proof)
+- [x] Review contract documented in `docs/node-memory-integration.md`
 - [ ] Green build + adversarial review per the /implement gates; merged to main
 - [ ] Backend redeployed (launchd); live turn with "remember this" produces a candidate
 
