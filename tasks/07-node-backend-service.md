@@ -22,8 +22,8 @@
 ## Definition of done
 - [x] Stub client: WAV note in → transcript → `/ask` reply text → playable MP3 URL out, end to end
 - [x] Missing or wrong token → 401 before the body is read
-- [ ] Service survives restart under launchd
-> orchestrator: verified post-merge from main checkout (mechanism proven in-branch with a throwaway `com.vesper.node.selftest` agent: kickstart -k + KeepAlive respawn, see HANDOVER 2026-10-07 ~20:47)
+- [x] Service survives restart under launchd
+> orchestrator 2026-10-07: verified post-merge from main checkout — real `com.vesper.node` installed on :8796, survived `kickstart -k` (new pid) and a hard kill (KeepAlive respawn); healthz OK, no/wrong token → 401, live stub turn OK through the launchd instance (mechanism first proven in-branch with a throwaway `com.vesper.node.selftest` agent: kickstart -k + KeepAlive respawn, see HANDOVER 2026-10-07 ~20:47)
 - [x] Latency numbers recorded in HANDOVER.md
 
 ## Anti-deliverables (do NOT build in this task)

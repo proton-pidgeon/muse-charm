@@ -140,3 +140,11 @@
 | Client: MP3 GET (loopback) | <0.01 s | | | |
 
 Against the documented baselines (loopback mock pipeline 0.66 s median; phone turn ~3–6 s), a node turn is ≈1.5 s from release to playable MP3 before network/Peggy hops. The caption arrives ≈0.3 s before the audio because the text is streamed before TTS. These are chat-only prompts, so turns that call Lobe tools will add brain time.
+
+## 2026-10-07 — Task 07 (B1) MERGED + live under launchd
+- /implement merged impl/07 to main (merge 355aa79): `backend/` (uv project `vesper_node`), wire protocol v1 at `docs/node-wire-protocol.md` (task 09 consumes/may amend). Rung: opus (start), no escalation. `make -C backend verify` = 101 passed.
+- Review gate: GPT-5.5 raised 1 HIGH (audio capability store count-bounded, not byte-bounded); Fable adjudicator downgraded it to ADVISORY (500-char cap → ~120 KB clips, realistic worst case ~77–128 MB, mirrors production phone_tts.py). Applied anyway: 64 MiB store byte budget + 512 KiB per-clip cap + direct tts tests (5d8a0da).
+- LaunchAgent `com.vesper.node` INSTALLED from the main checkout, port 8796, bind `::` (6PN + [::1]; NOT 127.0.0.1). Survived kickstart -k + hard-kill KeepAlive respawn. Logs `~/Library/Logs/vesper-node/`. Token in `~/.config/vesper-voice/node.env` (600) — task 12 must load the SAME `VESPER_NODE_TOKEN` into the Peggy Fly secret.
+- Live turn through the launchd instance: STT 0.87 s, /ask 1.06 s, TTS 0.45 s, total 2.39 s; 0 transcript/reply words in service logs.
+- No Deepgram key on the Studio: STT fallback is unit-tested only.
+- Next: task 08 (B2 registry) and 09 (F1 firmware backend) are unblocked; 12 stays human-gated.
