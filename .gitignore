@@ -4,3 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 backend/.build/
+# node registry (task 08) lives in ~/.config; never commit a copy
+nodes.json
+nodes.json.lock
+*.env

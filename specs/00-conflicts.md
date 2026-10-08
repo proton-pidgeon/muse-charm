@@ -16,6 +16,8 @@ The protocol is assigned to the firmware task (F1), but the backend (B1) is buil
 
 If each node gets its own token, a Caddy matcher on one `{env.VESPER_NODE_TOKEN}` can't authorize it. That works only if the edge token is shared and the per-node credential sits alongside it. **Handling in tasks:** task 08 (B2) records the chosen model as a decision. Task 12 (B4) must match it.
 
+**Resolved (task 08, 2026-10-08):** two layers. The shared edge bearer `Authorization: Bearer <VESPER_NODE_TOKEN>` stays as it is, so task 12's single static matcher needs no change. Next to it, every node sends a **per-node credential** `X-Node-Credential` with its `X-Node-Id`. The credential is issued by the claim flow, stored hashed in the backend's node registry, checked by the backend only, and revocable per node. The shared token alone can never approve a claim, set a room or mint a credential. Approval needs the local CLI or a separate `VESPER_NODE_ADMIN_TOKEN`. See `docs/node-wire-protocol.md`, *Credential model: decision*.
+
 ## C3 — Cross-reference error
 - §3: "**Voice choice is Kevin's open decision** (see §7)". The open questions are actually in §8, and §7 is the work breakdown. This is minor and has no design impact.
 

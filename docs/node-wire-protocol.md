@@ -28,8 +28,11 @@ over 6PN. **The backend's own routes have no `/vesper-node` prefix.**
 
 | Node-facing URL (via Peggy) | Backend route (after `strip_prefix`) | Auth |
 |---|---|---|
-| `POST https://peggy.fly.dev/vesper-node/turn` | `POST /turn` | node bearer |
-| `GET https://peggy.fly.dev/vesper-node/audio/{id}.mp3` | `GET /audio/{id}.mp3` | node bearer |
+| `POST https://peggy.fly.dev/vesper-node/turn` | `POST /turn` | node bearer + node credential |
+| `GET https://peggy.fly.dev/vesper-node/audio/{id}.mp3` | `GET /audio/{id}.mp3` | node bearer + node credential |
+| `POST https://peggy.fly.dev/vesper-node/claim/start` | `POST /claim/start` | node bearer + `X-Node-Id` |
+| `POST https://peggy.fly.dev/vesper-node/claim/poll` | `POST /claim/poll` | node bearer + `X-Node-Id` + `X-Claim-Secret` |
+| `POST https://peggy.fly.dev/vesper-node/admin/claim` | `POST /admin/claim` | node bearer + admin token (route off unless `VESPER_NODE_ADMIN_TOKEN` is set) |
 | *(not routed by Peggy)* | `GET /healthz` | none. Returns `{"ok": true}` only, no detail. |
 
 The task text names the route `POST /vesper-node/turn`. That is the node-facing path. The
@@ -58,8 +61,40 @@ to restrict it to 6PN only. Loopback health checks then stop working.
   missing or short, or if the file is group/other-readable.
 - The node token is **never forwarded**. The backend calls the brain with its own
   `VESPER_BRAIN_TOKEN`. One node token can reach `/vesper-node/*` only (Caddy matcher scope).
-- Per-node credentials and the claim flow belong to task 08 (conflict C2). v1 uses one shared
-  node token plus the `X-Node-Id` header. Task 08 may add a per-node credential next to it.
+- On top of the bearer, `/turn` and `/audio` need a **per-node credential** (task 08, below):
+  `X-Node-Id` must be a registered node and `X-Node-Credential` must match the credential it
+  was issued at claim time. This second check also runs in the middleware, before the body.
+
+### Credential model: decision (conflict C2, task 08, 2026-10-08)
+
+**Decision: two layers. One shared edge bearer, plus a per-node credential in its own
+header.**
+
+| Layer | Header | Checked by | Purpose |
+|---|---|---|---|
+| 1. Shared edge bearer | `Authorization: Bearer <VESPER_NODE_TOKEN>` | Peggy's `/vesper-node/*` matcher **and** the backend (constant time, before the body) | Keeps unauthenticated traffic off the backend. It is one static token, so it stays compatible with task 12's single `{env.VESPER_NODE_TOKEN}` matcher with no change. |
+| 2. Per-node credential | `X-Node-Id: homelink-<mac>` + `X-Node-Credential: vnc_<43 chars>` | backend only, against the node registry (SHA-256 at rest, `hmac.compare_digest`, before the body) | Identifies the node and its room, and lets one node be revoked without re-keying the fleet or touching the edge. |
+
+Why not one token per node in `Authorization`? The edge matcher can only compare against
+one static token, so per-node bearers would need a new Caddy scheme. §4 says "do not invent a
+new scheme". Why not the shared token plus a bare `node_id` claim? Then anyone holding the
+shared token could speak as any room, and revoking one node would mean re-keying every node.
+
+Rules that follow from the decision:
+
+- The shared token alone can **never** approve a claim, assign or change a room, or mint a
+  credential. Approval needs a separate authority: the **local CLI** run as the Studio user
+  who owns the 600 registry file (`vesper-node claim …`), or the optional `POST /admin/claim`
+  route with `X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>`.
+- A credential's plaintext exists in exactly one place: the single `/claim/poll` response that
+  delivers it. It is minted by that poll, so it never touches disk, the approver or a log.
+- The firmware (task 11) stores the credential under a new NVS `muse` key and sends it on
+  every `/turn` and `/audio` request. There is no refresh token. A node whose credential stops
+  working (`403 node_unauthorized`) goes back to the claim flow.
+- **Transition:** a board flashed before the claim flow existed has only the shared token. An
+  operator can let **one registered node** in with the shared token plus `X-Node-Id`
+  (`--allow-shared-token`, see *Operator*). This is off by default, set per node, and cleared
+  automatically when that node completes a claim. Unregistered nodes are always refused.
 
 ## `POST /turn`: one push-to-talk turn
 
@@ -70,6 +105,7 @@ POST /vesper-node/turn HTTP/1.1
 Host: peggy.fly.dev
 Authorization: Bearer <VESPER_NODE_TOKEN>
 X-Node-Id: homelink-<mac>
+X-Node-Credential: vnc_<43 chars>    (task 08; omitted only by a node on the shared-token transition)
 X-Vesper-Node-Protocol: 1            (optional; if present it must be "1")
 Content-Type: audio/wav              (audio/x-wav and audio/wave are accepted too)
 Content-Length: <n>                  (or Transfer-Encoding: chunked)
@@ -106,7 +142,8 @@ Every response carries `X-Vesper-Node-Protocol: 1`.
 | Status | `error` | When |
 |---|---|---|
 | 401 | `unauthorized` | missing or wrong bearer (body never read) |
-| 400 | `bad_node_id` | `X-Node-Id` missing or malformed |
+| 400 | `bad_node_id` | `X-Node-Id` missing, repeated or malformed (body never read) |
+| 403 | `node_unauthorized` | node unknown, registered but unclaimed, credential wrong/repeated/revoked, or registry unreadable (body never read). The firmware should start the claim flow. |
 | 400 | `unsupported_protocol` | `X-Vesper-Node-Protocol` present and not `1` |
 | 415 | `unsupported_media_type` | `Content-Type` is not a WAV type |
 | 413 | `too_large` | declared or streamed body over the cap |
@@ -175,7 +212,8 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
 
 ## `GET /audio/{id}.mp3`: the reply MP3
 
-- Requires the **same bearer** as `/turn`. The firmware can send headers, unlike Twilio's
+- Requires the **same bearer** as `/turn`, plus the same `X-Node-Id` + `X-Node-Credential`
+  (task 08). Without them it returns `400 bad_node_id` or `403 node_unauthorized`. The firmware can send headers, unlike Twilio's
   `<Play>`, so this route is bearer-gated **and** a capability URL. The id comes from
   `secrets.token_urlsafe(18)`: 24 url-safe characters, 144 bits.
 - `200 audio/mpeg`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
@@ -207,8 +245,10 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
    `{"text": transcript, "device_id": node_id, "channel": "node"}` and
    `Authorization: Bearer <VESPER_BRAIN_TOKEN>`. Client timeout is 30 s, above the brain's
    25 s deadline, as in `brain_llm.py`. There are no retries and no redirects. A cleartext
-   brain URL is refused unless the host is loopback or tailnet. No room context is prepended
-   yet (task 08 hook).
+   brain URL is refused unless the host is loopback or tailnet. **Room context (task 08):**
+   `text` is `"[Vesper node in the <room>] <transcript>"`, with the room taken from the
+   registry. The prefixed text must fit `/ask`'s 1000-char limit, or the turn ends as
+   `transcript_too_long`. `device_id` is still the bare `node_id`.
 5. **TTS** (`phone_tts.py` discipline). ElevenLabs `POST /v1/text-to-speech/{voice}` with
    `model_id=eleven_flash_v2_5`, `output_format=mp3_22050_32`, voice
    `VESPER_PHONE_TTS_VOICE_ID`, a 4 s hard timeout and a 500-char cap (cut at a word boundary
@@ -218,13 +258,157 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
 6. Logs carry the node id, byte and char **counts**, per-stage latencies, provider names and
    status codes. They never carry transcript or reply text, tokens, keys, or full audio ids.
 
+## Claim flow (task 08; firmware side is task 11)
+
+A node with no credential (fresh flash, or after `403 node_unauthorized`) runs this flow:
+
+```
+node                                   backend                         Kevin / Vesper
+ | POST /claim/start ------------------> | pending claim (10 min)          |
+ | <- 200 {claim_code, claim_secret}     |                                 |
+ | shows "K7M2-QX9P" on screen + BLE     |                                 |
+ | POST /claim/poll (every 3 s) -------> | 202 pending                     |
+ |                                       | <-- vesper-node claim K7M2-QX9P --room kitchen
+ | POST /claim/poll -------------------> | mints credential, stores hash   |
+ | <- 200 {credential} (exactly once)    |                                 |
+ | stores it in NVS muse, then /turn with X-Node-Credential               |
+```
+
+All three node-facing routes return JSON with `Cache-Control: no-store` and errors as
+`{"error": "<code>"}`. None of them reads a request body.
+
+### `POST /claim/start`
+
+```
+POST /vesper-node/claim/start
+Authorization: Bearer <VESPER_NODE_TOKEN>
+X-Node-Id: homelink-<mac>
+```
+
+`200`:
+```json
+{"status": "pending", "claim_code": "K7M2-QX9P", "claim_secret": "vcs_<43 chars>",
+ "expires_in": 600, "poll_interval": 3}
+```
+
+- `claim_code`: 8 characters from `23456789ABCDEFGHJKMNPQRSTVWXYZ` (no 0/O/1/I/L/U), shown
+  as `XXXX-XXXX`. Show it on the screen and over BLE. It is **not** a secret from the node's
+  point of view, but the node must not log it to serial.
+- `claim_secret`: keep it **in RAM only** and send it on every poll. It ties the poll to the
+  node that started the claim, so knowing the on-screen code and the shared token is not
+  enough to collect someone else's credential.
+- Starting again for the same `X-Node-Id` **replaces** the old claim: only the newest code
+  works. A node that is already claimed may start a claim too. Its current credential keeps
+  working until the new one is collected.
+- Errors: `429 rate_limited` (restart within 5 s of the last start; `Retry-After: 5`),
+  `429 too_many_pending` (8 claims are already pending across all nodes; `Retry-After: 60`),
+  `503 registry_unavailable`.
+
+### `POST /claim/poll`
+
+```
+POST /vesper-node/claim/poll
+Authorization: Bearer <VESPER_NODE_TOKEN>
+X-Node-Id: homelink-<mac>
+X-Claim-Secret: vcs_<43 chars>
+```
+
+- `202 {"status": "pending", "expires_in": <s>, "poll_interval": 3}`: not approved yet. Poll
+  again after `poll_interval`.
+- `200 {"status": "claimed", "node_id": "...", "room": "kitchen", "credential": "vnc_<43 chars>"}`:
+  approved. This is the **only** time the credential is ever sent. Store it in NVS before
+  you do anything else. Only its SHA-256 stays on the backend.
+- `404 {"error": "claim_not_found"}`: no claim for this node, or it expired, was replaced,
+  was already delivered, or the secret is wrong. All of these look the same. After 5 wrong
+  secrets the claim is dropped. Start over with `/claim/start`.
+- If the `200` is lost in transit, the credential is lost too. The node starts a new claim and
+  Kevin approves it again. The half-delivered credential is replaced when the new one is
+  collected.
+
+### Approving a code (claim authority; never the node)
+
+- **Local CLI** (normal path), as the Studio user:
+  `vesper-node claim K7M2-QX9P --room kitchen`. Case and the dash don't matter.
+- **HTTP** (optional, for Vesper), only when `VESPER_NODE_ADMIN_TOKEN` is set (≥ 32 chars, in
+  `node.env`, different from the node and brain tokens). Without it the route answers `404`.
+  ```
+  POST /vesper-node/admin/claim
+  Authorization: Bearer <VESPER_NODE_TOKEN>        (the edge needs it)
+  X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>   (checked before the body is read)
+  Content-Type: application/json
+
+  {"code": "K7M2-QX9P", "room": "kitchen"}         (body capped at 1 KiB)
+  ```
+  The reply is `200 {"node_id": "...", "room": "kitchen", "replaces_access": bool}`, where
+  `replaces_access` is true when the node already had a credential or shared-token access.
+  Errors: `403 forbidden` (admin token missing or wrong), `400 bad_request`, `400 bad_room`,
+  `404 claim_not_found`, `429 claim_locked`.
+- **Brute-force bounds.** A code lives 10 minutes and is single-use. At most 8 are pending.
+  After 10 wrong codes in 15 minutes (CLI and HTTP counted together), approvals lock for 15
+  minutes and **every pending claim is dropped**.
+- **Rooms** are free-form (open question Q5): 1-40 characters of letters, digits, space,
+  `-` and `_`, starting and ending with a letter or digit. They are pasted into the brain
+  prompt, so nothing else is allowed.
+
+## Operator: node registry
+
+- **File:** `~/.config/vesper-voice/nodes.json` (override with `VESPER_NODE_REGISTRY_FILE` in
+  the environment or in `node.env`). Mode 600 in a 700 directory. A group/other-readable,
+  symlinked or malformed file is refused, which is fail-closed: every node gets 403, and
+  `vesper-node serve` and `check-config` exit 78. A missing file is an empty registry.
+  `make check-config` prints the path, the node count and whether the admin route is on.
+- **Contents:** per node, `room`, `credential_sha256`, `allow_shared_token` and `claimed_at`,
+  plus pending claims (hashes only) and the failed-approval counter. Never put it in git.
+- **Writes** are load-modify-write under an exclusive `flock` on `nodes.json.lock`, then temp
+  file + `fsync` + atomic rename. The CLI and the running service can both write safely. The
+  service reloads the file when it changes, so **CLI edits apply on the next request without a
+  restart**.
+- **Commands** (`uv run --locked vesper-node …` from `backend/`, or the venv's `vesper-node`):
+
+  | Command | Effect |
+  |---|---|
+  | `vesper-node claim CODE --room ROOM` | approve the code a node shows |
+  | `vesper-node nodes list` | nodes, rooms, access kind, pending claims (no secrets) |
+  | `vesper-node nodes add ID --room ROOM [--allow-shared-token]` | pre-register a node (and optionally allow the shared-token transition) |
+  | `vesper-node nodes set-room ID ROOM` | move a node |
+  | `vesper-node nodes allow-shared-token ID on\|off` | toggle the transition for one node |
+  | `vesper-node nodes revoke ID` | drop its credential and shared-token access (it keeps its row and room) |
+  | `vesper-node nodes remove ID` | delete the row |
+
+### Transition for the live board (`homelink-c86320`, firmware before task 11)
+
+The board on the bench has only `VESPER_NODE_TOKEN`. Once this change is deployed, the
+backend refuses it (`403 node_unauthorized`) until it is registered. To keep it working until
+F3 ships:
+
+1. Deploy the new backend code (pull main into the main checkout, then `make -C backend install`).
+2. **Before or right after** restarting `com.vesper.node`, run as the Studio user:
+   `uv run --locked vesper-node nodes add homelink-c86320 --room <room> --allow-shared-token`
+   (from `backend/` in the main checkout). There's no need to restart again, because the
+   service picks up the file on the next request. If the restart comes first, the board gets
+   403 only until this command runs. It is never stuck.
+3. Check: `vesper-node nodes list` shows `access=SHARED-TOKEN (transition)`, and a turn from
+   the board succeeds. Its `/ask` text now starts with `[Vesper node in the <room>]`, and the
+   log line reads `auth=shared_token`.
+4. When task 11 firmware is flashed, the board runs the claim flow and Kevin approves it. The
+   shared-token allowance is cleared automatically. `nodes list` then shows
+   `access=credential`.
+5. If the board is lost or replaced: `vesper-node nodes revoke homelink-c86320`.
+
+While the transition is on, anyone who holds `VESPER_NODE_TOKEN` can speak as that one node.
+That is exactly the pre-task-08 status quo, limited to one node id.
+
 ## Versioning
 
 - The current version is **1**. Every backend response carries `X-Vesper-Node-Protocol: 1`.
   A node may send the same header. If it does, the backend rejects any value other than `1`
   with `400 unsupported_protocol`. A node that omits the header is treated as v1.
 - **Compatible** changes keep the version: adding SSE event types, adding JSON fields, adding
-  `error.code` values. Nodes must ignore unknown events and fields.
+  `error.code` values, adding routes. Nodes must ignore unknown events and fields.
+- Task 08's per-node credential **kept version 1** even though it touches auth. The request and
+  reply shapes don't change, and the extra header is negotiated per node by the registry, not
+  by the protocol version. v1 firmware without the header keeps working through the
+  per-node shared-token transition.
 - **Breaking** changes bump the version: changing the request body shape, renaming or
   removing events or fields, changing the auth scheme. The backend should then serve both
   versions until the fleet is OTA-updated (task 13).
@@ -297,5 +481,10 @@ of this changes the wire shape, so the version stays 1.
 - **v1, firmware notes (2026-10-07, task 09):** added *Node firmware notes*, which describes how
   the node uses v1: chunked upload, `audio_url` acceptance rules, the 4 KiB SSE event limit,
   timeouts and captions. These are clarifications only, with no wire change and no version bump.
+- **v1, node registry (2026-10-08, task 08):** conflict C2 decided (shared edge bearer +
+  per-node `X-Node-Credential`). Added `403 node_unauthorized` on `/turn` and `/audio`, the
+  claim routes (`/claim/start`, `/claim/poll`, `/admin/claim`), room context in the `/ask`
+  text, and the *Operator* section with the shared-token transition. The version stays 1
+  (see *Versioning*).
 - **v1, firmware notes (2026-10-08, task 10):** the TTS bullet now describes how the node fetches
   and plays the MP3. This is a clarification only: no wire change and no version bump.
