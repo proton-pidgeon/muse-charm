@@ -20,16 +20,24 @@
  *      with the kept note and a Content-Length.
  *   3. Reply: the SSE stream is read in short polls on this task and parsed
  *      by vesper_proto.c: transcript -> HEARD, text deltas -> captions,
- *      message_done -> the TTS slot (vesper_tts_slot_offer, task 10), error ->
- *      ERROR, done -> end of stream. As in stock firmware, each finished
- *      message's caption is paced over silence (16 chars/s) so the voice task
- *      pages it, and the turn ends (DONE) once every message has been shown.
+ *      message_done -> the message is queued to be said, with its speech URL
+ *      if it has one (the TTS slot), error -> ERROR, done -> end of stream.
+ *   4. Speech (task 10, the stock start_tts() slot filled): each finished
+ *      message in turn is said. With an audio_url, the MP3 is fetched with a
+ *      second GET (same bearer, same server), decoded by minimp3 on this task
+ *      as it arrives, resampled to 16 kHz (vesper_audio.c) and queued for the
+ *      voice task, which plays it (muse_hatch_turn_read) while its caption
+ *      follows the speech (muse_hatch_turn_caption, timed by the audio). With
+ *      no audio_url, or if the fetch or decode fails, the caption is paced
+ *      over silence (16 chars/s) as in stock firmware; a fetch cut short
+ *      plays what came and paces the rest of the caption over silence. The
+ *      turn ends (DONE) once every message has been said or shown.
  *
  * Everything network-side runs on one task. The voice task talks to it through
  * a command queue, a stream buffer of mic audio, an event queue (captions) and
  * a stream buffer of reply audio, exactly as with the stock backend. A
- * generation number tags each turn so that events of a cancelled turn are
- * dropped. No Meta account, token or transport is involved.
+ * generation number tags each turn so that events, and reply audio, of a
+ * cancelled turn are dropped. No Meta account, token or transport is involved.
  */
 #include "muse_chat_vesper.h"
 
@@ -55,13 +63,14 @@
 #include "muse_chat_priv.h"
 #include "muse_settings.h"
 #include "muse_wifi.h"
+#include "vesper_audio.h"
 #include "vesper_proto.h"
 
 static const char *TAG = "vesper_chat";
 
 #define MIC_RATE 16000
 #define IN_BYTES (MIC_RATE * 2 * 8)        /* 8 s of mic backlog while connecting */
-#define OUT_BYTES (MIC_RATE * 2 * 2)       /* 2 s of reply audio (silence, until task 10) */
+#define OUT_BYTES (MIC_RATE * 2 * 2)       /* 2 s of decoded reply audio */
 #define STAGE_BYTES 4096                   /* PCM per upload chunk (128 ms) */
 #define EV_TEXT 72
 #define MAX_MSGS 4
@@ -77,6 +86,16 @@ static const char *TAG = "vesper_chat";
 #define STREAM_IDLE_US (60 * 1000000LL)    /* nothing (not even a ping) for this long: give up */
 #define TURN_CAP_US (180 * 1000000LL)
 #define ERR_BODY_MAX 256
+
+/* Speech (task 10) */
+#define TTS_BUF (192 * 1024)               /* MP3 fetched, not yet decoded: ~48 s at 32 kbps (PSRAM) */
+#define TTS_READ 4096                      /* bytes per socket read */
+#define TTS_CONNECT_TIMEOUT_MS 5000        /* the MP3 is ready by the time message_done names it */
+#define TTS_POLL_MS 20                     /* MP3 read poll, between decodes */
+#define TTS_IDLE_US (10 * 1000000LL)       /* no MP3 bytes this long: say what came, pace the rest */
+#define TTS_MAX_BYTES (2 * 1024 * 1024)    /* a message's MP3, at most (the backend caps the text at 500 chars) */
+/* Resampled samples one MP3 frame can make: 1152 mono samples, at worst 8 kHz -> 16 kHz, plus the flush. */
+#define TTS_OUT_MAX (2 * (MINIMP3_MAX_SAMPLES_PER_FRAME / 2) + 2 * VA_RS_TAPS + 8)
 
 /* ---- Voice task <-> hatch task ---- */
 
@@ -108,8 +127,9 @@ typedef struct {
     size_t len;              /* reply text length so far */
     bool done;
     tts_t tts;
-    uint32_t pcm_start;      /* where its (silent) speech starts in the reply audio */
-    uint32_t pcm_frames;
+    uint32_t pcm_start;      /* where its speech (or silence) starts in the reply audio */
+    uint32_t pcm_frames;     /* how long it is; 0 until known (captions then guess 14 chars/s) */
+    char audio[VP_URL_MAX];  /* its MP3 (message_done.audio_url, resolved), or "" */
 } msg_t;
 
 typedef struct {
@@ -139,15 +159,39 @@ typedef struct {
     int cur;                 /* message receiving deltas, or -1 */
     bool stream_done;        /* the `done` event arrived */
     bool failed;
-    int tts_msg;             /* message being shown, or -1 */
+    int tts_msg;             /* message being said (or shown), or -1 */
+    bool silent;             /* tts_msg is paced by silence, not its MP3 */
     uint32_t pcm_out;        /* reply audio frames handed to the voice task */
     char reply_shown[EV_TEXT];
     int64_t t_status, t_text, t_done;
 } turn_t;
 
-/* ~22 KB, most of it the SSE parser: PSRAM on the AIPI, like the stock turn state. */
+/* ~23 KB, most of it the SSE parser: PSRAM on the AIPI, like the stock turn state. */
 EXT_RAM_BSS_ATTR static turn_t s_turn;
 static uint8_t s_rx[1024];
+
+/* The message being said: its MP3 GET, the bytes not yet decoded, the decoder. */
+typedef struct {
+    esp_http_client_handle_t http;   /* open while the MP3 downloads */
+    char content_type[48];
+    int64_t content_length;  /* -1: not given (chunked) */
+    uint64_t received;
+    bool cut_short;          /* the download ended early: what came is said, the rest paced */
+    bool flushed;            /* the resampler's tail is out */
+    va_mp3buf_t mp3;
+    mp3dec_t dec;
+    va_resampler_t rs;
+    int rate, channels;
+    uint32_t frames;         /* MP3 frames decoded */
+    uint64_t said_bytes;     /* the MP3 bytes those frames took */
+    int64_t t_open, t_headers, t_fetched, t_first, last_rx_us;
+} tts_state_t;
+
+/* ~20 KB (the decoder and the resampler's table): PSRAM, like the stock decoder state. */
+EXT_RAM_BSS_ATTR static tts_state_t s_tts;
+static uint8_t *s_tts_buf;   /* TTS_BUF, PSRAM, allocated once */
+static int16_t *s_tts_pcm;   /* MINIMP3_MAX_SAMPLES_PER_FRAME: one decoded frame */
+static int16_t *s_tts_out;   /* TTS_OUT_MAX: the frame at 16 kHz */
 
 static int64_t now_us(void)
 {
@@ -272,11 +316,15 @@ static void report_result(muse_hatch_state_t state, const char *detail)
     muse_hatch_report(state, detail);
 }
 
+static void tts_stop(void);
+
 static void turn_finish(void)
 {
     http_close();
+    tts_stop();   /* cancel, failure or time cap mid-speech: the MP3 GET goes too */
     s_turn.phase = P_IDLE;
     s_turn.tts_msg = -1;
+    s_turn.silent = false;
     memset(s_turn.auth, 0, sizeof(s_turn.auth));
 }
 
@@ -362,12 +410,20 @@ static void on_text_delta(void *ctx, const char *id, const char *text)
     }
 }
 
-/* Weak default for the task-10 slot: no playback yet, captions over silence. */
-__attribute__((weak)) bool vesper_tts_slot_offer(const char *abs_url, int msg)
+/*
+ * The TTS slot (task 10): a finished message with speech keeps its MP3's URL
+ * (resolved by vp_resolve_audio_url, so on the configured server) until its
+ * turn to be said; start_showing() fetches it then. No I/O here: this runs
+ * inside the SSE parser. False leaves the message to be paced over silence.
+ */
+static bool vesper_tts_slot_offer(const char *abs_url, int msg)
 {
-    (void)abs_url;
-    ESP_LOGI(TAG, "message %d has speech; TTS slot empty (task 10), showing the caption", msg);
-    return false;
+    msg_t *m = &s_turn.msgs[msg];
+    if (!s_tts_buf || !abs_url || strlcpy(m->audio, abs_url, sizeof(m->audio)) >= sizeof(m->audio)) {
+        m->audio[0] = '\0';
+        return false;
+    }
+    return true;
 }
 
 static void on_message_done(void *ctx, const char *id, const char *audio_url)
@@ -382,16 +438,11 @@ static void on_message_done(void *ctx, const char *id, const char *audio_url)
     s_turn.cur = -1;
     m->done = true;
     s_turn.t_done = now_us();
-    ESP_LOGI(TAG, "message %d done (%u chars, %s)", i, (unsigned)m->len, audio_url ? "with speech" : "no speech");
-    if (!m->len) {
-        m->tts = TTS_FINISHED;   /* nothing to show */
-        return;
-    }
-    if (audio_url && vesper_tts_slot_offer(audio_url, i)) {
-        m->tts = TTS_ACTIVE;     /* the slot owns it now */
-        return;
-    }
-    m->tts = TTS_QUEUED;
+    bool speech = m->len && audio_url && vesper_tts_slot_offer(audio_url, i);
+    ESP_LOGI(TAG, "message %d done (%u chars, %s)", i, (unsigned)m->len,
+             speech ? "with speech" : audio_url ? "speech refused" : "no speech");
+    /* said (or shown) in order, after the messages before it */
+    m->tts = m->len ? TTS_QUEUED : TTS_FINISHED;
 }
 
 static void on_error(void *ctx, const char *code, const char *caption)
@@ -446,6 +497,7 @@ static void turn_begin(uint32_t gen)
     s_turn.texts = texts;
     s_turn.nmsgs = 0;
     s_turn.cur = s_turn.tts_msg = -1;
+    s_turn.silent = false;
     s_turn.stream_done = s_turn.failed = false;
     s_turn.pcm_out = 0;
     s_turn.reply_shown[0] = '\0';
@@ -594,7 +646,260 @@ static void record_note(void)
 
 /* ---- Turn: reply ---- */
 
-/* Picks the next finished message to show. Adapted from start_tts() in muse_chat_session.cpp. */
+/* Hands reply audio to the voice task; a cancelled turn's never gets there. */
+static void push_reply(const int16_t *pcm, size_t n)
+{
+    if (n && s_turn.gen == atomic_load(&s_gen)) {
+        size_t bytes = n * sizeof(int16_t);
+        size_t sent = xStreamBufferSend(s_out, pcm, bytes, 0);
+        if (sent != bytes) {
+            ESP_LOGW(TAG, "reply buffer full: %u of %u bytes dropped", (unsigned)(bytes - sent), (unsigned)bytes);
+        }
+    }
+    s_turn.pcm_out += (uint32_t)n;
+}
+
+/* The caption is paced over silence from here: stock behaviour, or what's left after a failed fetch. */
+static void go_silent(msg_t *m, const char *why)
+{
+    uint32_t said = s_turn.pcm_out - m->pcm_start;
+    if (!said) {
+        m->pcm_frames = va_silent_frames(m->len, MIC_RATE, TEXT_CHARS_PER_S);
+    } else if (m->pcm_frames < said) {
+        m->pcm_frames = said;
+    }
+    s_turn.silent = true;
+    ESP_LOGI(TAG, "message %d: %s; caption paced over silence (%.2f s left)", s_turn.tts_msg, why,
+             (m->pcm_frames - said) / (double)MIC_RATE + TEXT_HOLD_S);
+}
+
+static esp_err_t on_tts_http_event(esp_http_client_event_t *e)
+{
+    if (e->event_id == HTTP_EVENT_ON_HEADER && e->header_key && e->header_value &&
+        !strcasecmp(e->header_key, "Content-Type")) {
+        strlcpy(s_tts.content_type, e->header_value, sizeof(s_tts.content_type));
+    }
+    return ESP_OK;
+}
+
+/* Closes the MP3 GET and empties the MP3 buffer. Every way a message's speech ends comes here. */
+static void tts_stop(void)
+{
+    if (s_tts.http) {
+        esp_http_client_close(s_tts.http);
+        esp_http_client_cleanup(s_tts.http);
+        s_tts.http = NULL;
+    }
+    va_mp3_init(&s_tts.mp3, s_tts_buf, TTS_BUF);
+}
+
+/*
+ * GET <the message's MP3> with the turn's bearer. Blocks for the connect and
+ * the response headers only (the MP3 is ready: message_done came after it);
+ * the body is read in short polls by tts_fetch(). False (nothing left open) if
+ * it can't be said: the caller paces the caption silently instead.
+ */
+static bool tts_open(int i)
+{
+    msg_t *m = &s_turn.msgs[i];
+    tts_stop();
+    if (!s_tts_buf || !m->audio[0]) {
+        return false;
+    }
+    s_tts.content_type[0] = '\0';
+    s_tts.content_length = -1;
+    s_tts.received = 0;
+    s_tts.cut_short = s_tts.flushed = false;
+    s_tts.rate = s_tts.channels = 0;
+    s_tts.frames = 0;
+    s_tts.said_bytes = 0;
+    s_tts.t_open = now_us();
+    s_tts.t_headers = s_tts.t_fetched = s_tts.t_first = 0;
+    esp_http_client_config_t cfg = {
+        .url = m->audio,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = TTS_CONNECT_TIMEOUT_MS,
+        .event_handler = on_tts_http_event,
+        .buffer_size = 2048,
+        .buffer_size_tx = VP_AUTH_MAX + 512,   /* the request line and headers, bearer included */
+        .disable_auto_redirect = true,         /* never carry the bearer elsewhere */
+        .crt_bundle_attach = s_turn.base.https ? esp_crt_bundle_attach : NULL,
+    };
+    s_tts.http = esp_http_client_init(&cfg);
+    if (!s_tts.http) {
+        ESP_LOGW(TAG, "tts: no HTTP client");
+        return false;
+    }
+    esp_http_client_set_header(s_tts.http, s_turn.hdrs[0].name, s_turn.hdrs[0].value);   /* Authorization */
+    esp_http_client_set_header(s_tts.http, s_turn.hdrs[1].name, s_turn.hdrs[1].value);   /* X-Node-Id */
+    esp_http_client_set_header(s_tts.http, "Accept", "audio/mpeg");
+    esp_err_t err = esp_http_client_open(s_tts.http, 0);
+    int64_t cl = err == ESP_OK ? esp_http_client_fetch_headers(s_tts.http) : -1;
+    int status = cl >= 0 ? esp_http_client_get_status_code(s_tts.http) : 0;
+    bool chunked = cl >= 0 && esp_http_client_is_chunked_response(s_tts.http);
+    bool type_ok = va_tts_content_type_ok(s_tts.content_type);
+    s_tts.t_headers = now_us();
+    /* never the URL: its id is a capability */
+    ESP_LOGI(TAG, "tts: message %d: GET HTTP %d, Content-Length %lld%s, %s, headers in %d ms", i, status,
+             (long long)(cl > 0 && !chunked ? cl : -1), chunked ? " (chunked)" : "",
+             type_ok ? "audio/mpeg" : "not audio/mpeg", (int)((s_tts.t_headers - s_tts.t_open) / 1000));
+    if (err != ESP_OK || status != 200 || !type_ok || cl > TTS_MAX_BYTES) {
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "tts: connect failed: %s", esp_err_to_name(err));
+        }
+        tts_stop();
+        return false;
+    }
+    s_tts.content_length = cl > 0 && !chunked ? cl : -1;
+    esp_http_client_set_timeout_ms(s_tts.http, TTS_POLL_MS);
+    mp3dec_init(&s_tts.dec);
+    s_tts.last_rx_us = now_us();
+    return true;
+}
+
+/* The download is over: all of it, or cut short (what came is still said). */
+static void tts_fetched(bool cut_short)
+{
+    if (s_tts.http) {
+        esp_http_client_close(s_tts.http);
+        esp_http_client_cleanup(s_tts.http);
+        s_tts.http = NULL;
+    }
+    s_tts.mp3.ended = true;
+    s_tts.cut_short = cut_short;
+    s_tts.t_fetched = now_us();
+    ESP_LOGI(TAG, "tts: fetched %llu of %lld bytes in %d ms%s", (unsigned long long)s_tts.received,
+             (long long)s_tts.content_length, (int)((s_tts.t_fetched - s_tts.t_open) / 1000),
+             cut_short ? " (cut short)" : "");
+}
+
+/* Reads MP3 while the buffer has room: flow control, so a long reply never overflows it. */
+static void tts_fetch(void)
+{
+    for (int reads = 0; reads < 4 && s_tts.http; reads++) {
+        size_t room = va_mp3_room(&s_tts.mp3);
+        if (!room) {
+            return;   /* the decoder makes room as the speaker plays */
+        }
+        int want = room < TTS_READ ? (int)room : TTS_READ;
+        int n = esp_http_client_read(s_tts.http, (char *)s_tts.mp3.buf + s_tts.mp3.len, want);
+        if (n > 0) {
+            s_tts.mp3.len += (size_t)n;   /* n <= want <= room */
+            s_tts.received += (uint64_t)n;
+            s_tts.last_rx_us = now_us();
+            if (s_tts.content_length > 0 && s_tts.received >= (uint64_t)s_tts.content_length) {
+                tts_fetched(false);
+            } else if (s_tts.received >= TTS_MAX_BYTES) {
+                ESP_LOGW(TAG, "tts: MP3 over %d bytes, saying the start", TTS_MAX_BYTES);
+                tts_fetched(true);
+            }
+            continue;
+        }
+        if (n == -ESP_ERR_HTTP_EAGAIN) {
+            if (now_us() - s_tts.last_rx_us > TTS_IDLE_US) {
+                ESP_LOGW(TAG, "tts: download stalled");
+                tts_fetched(true);
+            }
+            return;
+        }
+        /* 0: the body ended; < 0: the connection dropped */
+        bool complete = n == 0 && (s_tts.content_length > 0 ? s_tts.received >= (uint64_t)s_tts.content_length
+                                                            : esp_http_client_is_complete_data_received(s_tts.http));
+        tts_fetched(!complete);
+        return;
+    }
+}
+
+/*
+ * Decodes buffered MP3 while the reply buffer has room, keeps the message's
+ * length (for its caption) up to date, and finishes it once it's all out.
+ * The stock decode() in muse_chat_session.cpp, with the anti-aliased
+ * resampler (vesper_audio.c) in place of its linear one.
+ */
+static void tts_decode(void)
+{
+    int i = s_turn.tts_msg;
+    msg_t *m = &s_turn.msgs[i];
+    size_t off = 0;
+    while (va_mp3_may_decode(&s_tts.mp3, off) && xStreamBufferSpacesAvailable(s_out) >= TTS_OUT_MAX * sizeof(int16_t)) {
+        mp3dec_frame_info_t info;
+        int samples = mp3dec_decode_frame(&s_tts.dec, s_tts.mp3.buf + off, (int)(s_tts.mp3.len - off), s_tts_pcm, &info);
+        if (!info.frame_bytes) {
+            if (s_tts.mp3.ended) {
+                off = s_tts.mp3.len;   /* trailing junk */
+            }
+            break;
+        }
+        off += (size_t)info.frame_bytes;
+        if (!samples) {
+            continue;   /* an ID3 tag, or a frame skipped while syncing */
+        }
+        if (info.channels == 2) {
+            for (int k = 0; k < samples; k++) {
+                s_tts_pcm[k] = (int16_t)((s_tts_pcm[2 * k] + s_tts_pcm[2 * k + 1]) / 2);
+            }
+        }
+        if (s_tts.rate != info.hz) {
+            int64_t t0 = now_us();
+            if (s_tts.rs.in_rate == (uint32_t)info.hz && s_tts.rs.out_rate == MIC_RATE) {
+                va_rs_reset(&s_tts.rs);   /* the same rates as the last message: keep the table */
+            } else if (!va_rs_init(&s_tts.rs, (uint32_t)info.hz, MIC_RATE)) {
+                ESP_LOGW(TAG, "tts: can't resample %d Hz", info.hz);
+                continue;
+            }
+            s_tts.rate = info.hz;
+            s_tts.channels = info.channels;
+            ESP_LOGI(TAG, "tts: reply audio %d Hz, %d ch, %d kbps -> %d Hz (resampler ready in %d ms)", info.hz,
+                     info.channels, info.bitrate_kbps, MIC_RATE, (int)((now_us() - t0) / 1000));
+        }
+        size_t n = va_rs_process(&s_tts.rs, s_tts_pcm, (size_t)samples, s_tts_out);
+        if (n && !s_tts.t_first) {
+            s_tts.t_first = now_us();
+        }
+        push_reply(s_tts_out, n);
+        s_tts.said_bytes += (uint64_t)info.frame_bytes;
+        s_tts.frames++;
+    }
+    va_mp3_consume(&s_tts.mp3, off);
+
+    uint32_t said = s_turn.pcm_out - m->pcm_start;
+    if (said) {
+        /* what's out, plus what the rest (buffered and still to come) holds at the same bytes per frame */
+        uint64_t left = s_tts.mp3.len;
+        if (!s_tts.mp3.ended && s_tts.content_length > 0 && s_tts.received < (uint64_t)s_tts.content_length) {
+            left += (uint64_t)s_tts.content_length - s_tts.received;
+        }
+        m->pcm_frames = va_speech_frames(said, s_tts.said_bytes, left);
+    }
+    if (!va_mp3_drained(&s_tts.mp3)) {
+        return;
+    }
+    if (s_tts.rate && !s_tts.flushed) {
+        if (xStreamBufferSpacesAvailable(s_out) < TTS_OUT_MAX * sizeof(int16_t)) {
+            return;   /* the resampler's tail goes next time */
+        }
+        push_reply(s_tts_out, va_rs_flush(&s_tts.rs, s_tts_out));
+        s_tts.flushed = true;
+        said = s_turn.pcm_out - m->pcm_start;
+    }
+    if (!said) {
+        go_silent(m, "no audio decoded");
+        return;
+    }
+    ESP_LOGI(TAG, "tts: message %d: %u MP3 frames at %d Hz -> %u samples at %d Hz (%.2f s of speech); "
+             "first audio %d ms after the GET",
+             i, (unsigned)s_tts.frames, s_tts.rate, (unsigned)said, MIC_RATE, said / (double)MIC_RATE,
+             s_tts.t_first ? (int)((s_tts.t_first - s_tts.t_open) / 1000) : -1);
+    if (s_tts.cut_short) {
+        go_silent(m, "speech cut short");   /* the rest of the caption, at the speech's pace */
+        return;
+    }
+    m->pcm_frames = said;
+    m->tts = TTS_FINISHED;
+    s_turn.tts_msg = -1;
+}
+
+/* Picks the next finished message to say (or show). The stock start_tts() slot, filled. */
 static void start_showing(void)
 {
     if (s_turn.tts_msg >= 0) {
@@ -606,10 +911,16 @@ static void start_showing(void)
             continue;
         }
         m->pcm_start = s_turn.pcm_out;
-        m->pcm_frames = (uint32_t)(m->len * MIC_RATE / TEXT_CHARS_PER_S);
+        m->pcm_frames = 0;
         m->tts = TTS_ACTIVE;
         s_turn.tts_msg = i;
+        s_turn.silent = false;
         show_reply_start(i);
+        if (!m->audio[0]) {
+            go_silent(m, "no speech");
+        } else if (!tts_open(i)) {
+            go_silent(m, "speech unavailable");
+        }
         return;
     }
 }
@@ -618,20 +929,31 @@ static void start_showing(void)
 static void pace_silently(void)
 {
     static const int16_t zeros[256];
-    if (s_turn.tts_msg < 0) {
-        return;
-    }
     msg_t *m = &s_turn.msgs[s_turn.tts_msg];
     uint32_t end = m->pcm_start + m->pcm_frames + TEXT_HOLD_S * MIC_RATE;
     while (s_turn.pcm_out < end && xStreamBufferSpacesAvailable(s_out) >= sizeof(zeros)) {
         uint32_t n = end - s_turn.pcm_out < 256 ? end - s_turn.pcm_out : 256;
-        xStreamBufferSend(s_out, zeros, n * sizeof(int16_t), 0);
-        s_turn.pcm_out += n;
+        push_reply(zeros, n);
     }
     if (s_turn.pcm_out >= end) {
         m->tts = TTS_FINISHED;
         s_turn.tts_msg = -1;
+        s_turn.silent = false;
     }
+}
+
+/* The message being said: its MP3 in and decoded, or its silence. */
+static void speak(void)
+{
+    if (s_turn.tts_msg < 0) {
+        return;
+    }
+    if (s_turn.silent) {
+        pace_silently();
+        return;
+    }
+    tts_fetch();
+    tts_decode();
 }
 
 static void end_stream(void)
@@ -811,7 +1133,7 @@ static void hatch_task(void *arg)
         }
         if (s_turn.phase == P_STREAM || s_turn.phase == P_PACE) {
             start_showing();
-            pace_silently();
+            speak();
         }
         if (s_turn.phase != P_IDLE && s_turn.phase != P_LISTEN) {
             check_turn();
@@ -854,10 +1176,24 @@ void muse_hatch_start(void)
     s_turn.chunk = psram_alloc(16 + STAGE_BYTES + 2);
     s_turn.texts = psram_alloc(MAX_MSGS * TEXT_MAX);
     s_turn.cur = s_turn.tts_msg = -1;
+    /* Speech: allocated once and kept, so no path of a turn has anything to free. Without
+     * them replies are still shown, paced over silence (vesper_tts_slot_offer declines). */
+    s_tts_buf = psram_alloc(TTS_BUF);
+    s_tts_pcm = psram_alloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t));
+    s_tts_out = psram_alloc(TTS_OUT_MAX * sizeof(int16_t));
+    if (!s_tts_buf || !s_tts_pcm || !s_tts_out) {
+        ESP_LOGE(TAG, "no memory for speech; replies will be captions only");
+        free(s_tts_buf);
+        free(s_tts_pcm);
+        free(s_tts_out);
+        s_tts_buf = NULL;
+        s_tts_pcm = s_tts_out = NULL;
+    }
+    va_mp3_init(&s_tts.mp3, s_tts_buf, TTS_BUF);
     if (!s_node_id[0]) {
         ESP_LOGW(TAG, "no node id set; turns will be refused");
     }
-    /* Stack in PSRAM, like the stock session task: TLS runs here (and task 10's MP3 decoder). */
+    /* Stack in PSRAM, like the stock session task: TLS and the MP3 decoder (~16 KB of scratch) run here. */
     if (!s_cmds || !s_events || !s_in || !s_out || !s_turn.note || !s_turn.chunk || !s_turn.texts ||
         xTaskCreatePinnedToCoreWithCaps(hatch_task, "muse_chat", 32 * 1024, NULL, 5, NULL, 0,
                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
@@ -943,6 +1279,35 @@ muse_hatch_ev_t muse_hatch_turn_event(char *text, size_t cap)
     return MUSE_HATCH_EV_NONE;
 }
 
+/*
+ * Caption-sync evidence for the serial log (voice task only): one line per
+ * page turn, with where the speech is and where the caption is, never the
+ * text. In sync, char/len tracks audio/speech.
+ */
+static void log_caption_page(int msg, size_t played, uint32_t start, uint32_t frames, size_t at, size_t len,
+                             const char *page)
+{
+    static int s_msg = -1, s_page;
+    static size_t s_played;
+    static uint32_t s_hash;
+    uint32_t h = 2166136261u;   /* FNV-1a of the page, to notice it turn */
+    for (const char *c = page; *c; c++) {
+        h = (h ^ (uint8_t)*c) * 16777619u;
+    }
+    if (played < s_played) {
+        s_msg = -1;   /* a new turn's reply */
+    }
+    s_played = played;
+    if (msg == s_msg && h == s_hash) {
+        return;
+    }
+    s_page = msg == s_msg ? s_page + 1 : 1;
+    s_msg = msg;
+    s_hash = h;
+    ESP_LOGI(TAG, "caption: message %d page %d at %.2f s of %.2f s (char %u of %u)", msg, s_page,
+             (played - start) / (double)MIC_RATE, frames / (double)MIC_RATE, (unsigned)at, (unsigned)len);
+}
+
 /* The page of the message being "said" after `played` frames. From muse_chat_session.cpp. */
 bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
 {
@@ -970,7 +1335,11 @@ bool muse_hatch_turn_caption(size_t played, char *out, size_t cap)
     if (at >= len) {
         at = len ? len - 1 : 0;
     }
-    return muse_hatch_caption_at(text, at, out, cap);
+    bool ok = muse_hatch_caption_at(text, at, out, cap);
+    if (ok) {
+        log_caption_page((int)(m - s_turn.msgs), played, m->pcm_start, frames, at, len, out);
+    }
+    return ok;
 }
 
 size_t muse_hatch_turn_read(int16_t *pcm, size_t frames, int wait_ms)
@@ -979,39 +1348,7 @@ size_t muse_hatch_turn_read(int16_t *pcm, size_t frames, int wait_ms)
 }
 
 /* ---- MP3 self-test (bench 'm'): decodes the embedded test_reply.mp3 ---- */
-/* Adapted from muse_chat_session.cpp; the reply decoder task 10 wires up works the same way. */
-
-typedef struct {
-    uint32_t step;   /* Q16 input samples per output sample */
-    uint32_t pos;
-    int16_t prev;
-} resampler_t;
-
-static void resampler_init(resampler_t *r, int in_rate, int out_rate)
-{
-    r->step = (uint32_t)(((uint64_t)in_rate << 16) / (uint64_t)out_rate);
-    r->pos = 0;
-    r->prev = 0;
-}
-
-/* Linear interpolation; state carries across calls. out must hold n*out/in + 2. */
-static size_t resample(resampler_t *r, const int16_t *in, size_t n, int16_t *out)
-{
-    size_t o = 0;
-    if (!n) {
-        return 0;
-    }
-    while ((r->pos >> 16) < n) {
-        size_t i = r->pos >> 16;
-        int32_t a = i ? in[i - 1] : r->prev;
-        int32_t b = in[i];
-        out[o++] = (int16_t)(a + (((b - a) * (int32_t)(r->pos & 0xffff)) >> 16));
-        r->pos += r->step;
-    }
-    r->pos -= (uint32_t)(n << 16);
-    r->prev = in[n - 1];
-    return o;
-}
+/* Adapted from muse_chat_session.cpp; decodes and resamples as a spoken reply is (tts_decode). */
 
 static size_t mp3_selftest(int16_t **pcm_out)
 {
@@ -1019,17 +1356,18 @@ static size_t mp3_selftest(int16_t **pcm_out)
     extern const uint8_t mp3_end[] asm("_binary_test_reply_mp3_end");
     size_t len = (size_t)(mp3_end - mp3_start);
     mp3dec_t *dec = psram_alloc(sizeof(mp3dec_t));
+    va_resampler_t *rs = psram_alloc(sizeof(va_resampler_t));
     int16_t *pcm = psram_alloc(MINIMP3_MAX_SAMPLES_PER_FRAME * sizeof(int16_t));
     size_t cap = MIC_RATE * 10;
     int16_t *out = psram_alloc(cap * sizeof(int16_t));
-    if (!dec || !pcm || !out) {
+    if (!dec || !rs || !pcm || !out) {
         free(dec);
+        free(rs);
         free(pcm);
         free(out);
         return 0;
     }
     mp3dec_init(dec);
-    resampler_t rs = { 0 };
     int rate = 0, frames = 0;
     size_t off = 0, n = 0;
     int64_t t0 = now_us();
@@ -1050,17 +1388,23 @@ static size_t mp3_selftest(int16_t **pcm_out)
             }
         }
         if (rate != info.hz) {
+            if (!va_rs_init(rs, (uint32_t)info.hz, MIC_RATE)) {
+                break;
+            }
             rate = info.hz;
-            resampler_init(&rs, info.hz, MIC_RATE);
         }
-        if (n + (size_t)samples * MIC_RATE / (size_t)rate + 2 > cap) {
+        if (n + va_rs_max_out(rs, (size_t)samples) + va_rs_max_out(rs, 0) > cap) {
             break;
         }
-        n += resample(&rs, pcm, (size_t)samples, out + n);
+        n += va_rs_process(rs, pcm, (size_t)samples, out + n);
+    }
+    if (rate) {
+        n += va_rs_flush(rs, out + n);   /* room was kept for it */
     }
     ESP_LOGI(TAG, "mp3 selftest: %u bytes, %d frames at %d Hz -> %u samples (%.2f s) in %lld ms", (unsigned)len, frames,
              rate, (unsigned)n, n / (double)MIC_RATE, (long long)((now_us() - t0) / 1000));
     free(dec);
+    free(rs);
     free(pcm);
     *pcm_out = out;
     return n;

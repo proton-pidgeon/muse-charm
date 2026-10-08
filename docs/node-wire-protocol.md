@@ -276,9 +276,20 @@ of this changes the wire shape, so the version stays 1.
   Any other status counts as reachable. Through Peggy the edge needs the bearer, which is why
   the node sends it even though the backend's `/healthz` ignores it.
 - **TTS (task 10).** On `message_done` with a non-null, accepted `audio_url`, the firmware
-  calls `vesper_tts_slot_offer(<resolved absolute URL>, msg)`. Task 09 ships only a weak
-  default that declines, so every reply is shown as a caption paced over silence (16 chars/s),
-  the same as stock firmware.
+  records the resolved URL (`vesper_tts_slot_offer`). When the message's turn to be said comes, it
+  sends `GET <url>` with the same `Authorization` and `X-Node-Id`, plus `Accept: audio/mpeg`.
+  It never follows redirects and allows 5 s for connect and headers. It needs `200` with
+  `audio/mpeg` (or no Content-Type) and at most 2 MiB. It reads `Content-Length` when it is
+  present; chunked is also accepted. The node decodes the MP3 as it arrives, resamples it to
+  16 kHz and plays it, with the caption timed by the audio. It falls back to the stock silent
+  caption pacing (16 chars/s) when:
+  - `audio_url` is null or refused;
+  - the GET fails or returns anything else;
+  - no frame decodes.
+
+  A download cut short or stalled for 10 s plays what arrived and paces the rest of the caption.
+  A `404` (expired id) is a normal fallback; the node doesn't retry. The node never logs the
+  URL, only status, byte counts and timings.
 
 ## Changelog
 
@@ -286,3 +297,5 @@ of this changes the wire shape, so the version stays 1.
 - **v1, firmware notes (2026-10-07, task 09):** added *Node firmware notes*, which describes how
   the node uses v1: chunked upload, `audio_url` acceptance rules, the 4 KiB SSE event limit,
   timeouts and captions. These are clarifications only, with no wire change and no version bump.
+- **v1, firmware notes (2026-10-08, task 10):** the TTS bullet now describes how the node fetches
+  and plays the MP3. This is a clarification only: no wire change and no version bump.

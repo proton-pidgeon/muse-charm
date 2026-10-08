@@ -7,7 +7,8 @@
 # Steps:
 #   1. delete the Meta transport (firmware/sdk-patches/delete.txt)
 #   2. apply the patch series (firmware/sdk-patches/*.patch, in order)
-#   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}) into
+#   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
+#      the protocol core, the reply-speech helpers) into
 #      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
@@ -55,7 +56,7 @@ done
 # 3. the Vesper hatch backend
 dest="$sdk/esp32/components/muse/vesper"
 mkdir -p "$dest"
-for f in vesper_proto.c vesper_proto.h muse_chat_vesper.c muse_chat_vesper.h; do
+for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h; do
     if ! cmp -s "$here/hatch/$f" "$dest/$f"; then
         cp "$here/hatch/$f" "$dest/$f"
         echo "installed: components/muse/vesper/$f"

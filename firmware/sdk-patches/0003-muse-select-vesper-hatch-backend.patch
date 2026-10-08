@@ -18,7 +18,7 @@ index 34982cd5ad6a83458cb816aaa3c6526da65ce7d0..9bebc4a8ac48781ce607eed39eb085f0
 +    if(NOT CONFIG_MUSE_HATCH)
 +        message(FATAL_ERROR "The Vesper backend needs CONFIG_MUSE_HATCH (a board with PSRAM)")
      endif()
-+    list(APPEND srcs "muse_chat.c" "vesper/muse_chat_vesper.c" "vesper/vesper_proto.c")
++    list(APPEND srcs "muse_chat.c" "vesper/muse_chat_vesper.c" "vesper/vesper_proto.c" "vesper/vesper_audio.c")
 +    list(APPEND embed "test_reply.mp3")   # muse_hatch_mp3_selftest
      list(APPEND srcs "muse_chat_text.c")
      # Your own character (tools/muse/AVATAR_RECIPE.md) stands in for the default

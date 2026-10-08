@@ -15,7 +15,6 @@
  */
 #pragma once
 
-#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -26,21 +25,13 @@ extern "C" {
 void muse_hatch_set_node_id(const char *node_id);
 
 /*
- * ---- TTS slot (task 10, F2) ----
- *
- * Called on the hatch task when a reply message is complete and the server
- * made speech for it: abs_url is message_done.audio_url resolved against the
- * server URL (vp_resolve_audio_url guarantees it is on the configured server),
- * to be fetched with the same bearer. msg is the message's index in the turn.
- *
- * Return false to leave the message to the stock behaviour (its caption is
- * paced over silence). Return true only once the slot has taken over the
- * message's speech: it then GETs the MP3 and feeds the existing
- * decode / muse_hatch_turn_read path, and must finish the message.
- *
- * Task 09 ships only this weak default, which declines (no playback yet).
+ * Speech (task 10, F2): a reply message whose message_done carries an
+ * audio_url is fetched (GET, same bearer, same server only), decoded and
+ * resampled to 16 kHz on the hatch task, and handed to the voice task through
+ * muse_hatch_turn_read(), its caption timed by the speech. With no audio_url,
+ * or if the fetch or decode fails, the caption is paced over silence as in
+ * stock firmware. See muse_chat_vesper.c and vesper_audio.h.
  */
-bool vesper_tts_slot_offer(const char *abs_url, int msg);
 
 #ifdef __cplusplus
 }
