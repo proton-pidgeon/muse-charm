@@ -4,6 +4,7 @@
     vesper-node check-config     # report settings by name (never values); exit 78 if unusable
     vesper-node claim CODE --room ROOM            # approve a node's on-screen claim code
     vesper-node nodes list|add|set-room|allow-shared-token|revoke|remove ...   (see cli.py)
+    vesper-node firmware publish BIN|status|withdraw  # node firmware updates (task 13)
 
 The wire protocol is ``docs/node-wire-protocol.md`` (v1). Backend routes (Peggy strips the
 ``/vesper-node`` prefix before proxying):
@@ -14,14 +15,17 @@ The wire protocol is ``docs/node-wire-protocol.md`` (v1). Backend routes (Peggy 
 * ``GET /healthz``: unauthenticated ``{"ok": true}``.
 * ``POST /claim/start``, ``POST /claim/poll``: the node side of the claim flow (task 08).
 * ``POST /admin/claim``: approve a claim code (only if ``VESPER_NODE_ADMIN_TOKEN`` is set).
+* ``GET /firmware/manifest``, ``GET /firmware/<sha256>.bin``: the published node firmware
+  (task 13, :mod:`vesper_node.firmware`), same node auth as ``/turn``.
 
 Auth is checked before the body is read, as in ``vesper-voice/.../brain_service.py``.
 :class:`BearerAuth` is a pure-ASGI middleware that checks ``Authorization: Bearer
 <VESPER_NODE_TOKEN>`` with ``hmac.compare_digest`` on every route except ``GET /healthz``,
 and answers 401 **without ever calling** ``receive``. The body is never consumed on a bad
 token. The same middleware then does the per-route second factor, still before the body
-(task 08, conflict C2): ``/turn`` and ``/audio`` need a registered ``X-Node-Id`` plus its
-``X-Node-Credential`` (403 ``node_unauthorized`` otherwise); ``/admin/*`` needs
+(task 08, conflict C2): ``/turn``, ``/audio`` and ``/firmware`` (task 13) need a registered
+``X-Node-Id`` plus its ``X-Node-Credential`` (403 ``node_unauthorized`` otherwise);
+``/admin/*`` needs
 ``X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>``.
 
 Transcripts are transient (Kevin's Q4 decision). Transcript and reply text go to the node
@@ -50,6 +54,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import logsafe
 from .brain import MAX_TEXT_CHARS, AskError, BrainClient, with_room_context
 from .config import ConfigError, Settings, load_settings
+from .firmware import IMAGE_NAME_RE, VERSION_RE, FirmwareError, FirmwareStore
 from .registry import NODE_ID_RE, POLL_INTERVAL_S, ClaimError, NodeAuth, Registry, RegistryError
 from .stt import STT, STTError
 from .tts import NodeTTS
@@ -113,7 +118,7 @@ def _single_header(scope: Scope, name: bytes) -> tuple[str | None, bool]:
 
 def _is_node_route(method: str, path: str) -> bool:
     return (method == "POST" and path == "/turn") or (
-        method in {"GET", "HEAD"} and path.startswith("/audio/")
+        method in {"GET", "HEAD"} and path.startswith(("/audio/", "/firmware/"))
     )
 
 
@@ -219,6 +224,8 @@ def _route_label(scope: Scope) -> str:
         return "audio"
     if path.startswith("/claim/"):
         return "claim"
+    if path.startswith("/firmware/"):
+        return "firmware"
     if path.startswith(ADMIN_PREFIX):
         return "admin"
     return "other"
@@ -265,12 +272,15 @@ def create_app(
     sse_preamble_bytes: int = SSE_PREAMBLE_BYTES,
     sse_ping_s: float = SSE_PING_S,
     registry: Registry | None = None,
+    firmware: FirmwareStore | None = None,
 ) -> BearerAuth:
     """Build the ASGI app (FastAPI wrapped in :class:`BearerAuth`). Transports are for tests."""
     if registry is None:
         if not settings.registry_file:
             raise ValueError("create_app needs a registry (settings.registry_file or registry=)")
         registry = Registry(settings.registry_file)
+    if firmware is None and settings.firmware_dir:
+        firmware = FirmwareStore(settings.firmware_dir)
     stt = STT(
         chain=[(p, settings.stt_key(p) or "") for p in settings.stt_chain()],
         language=settings.stt_language,
@@ -609,6 +619,56 @@ def create_app(
             headers={"Cache-Control": "no-store"},
         )
 
+    # ---- Firmware updates (task 13) ----
+
+    def firmware_down(e: FirmwareError) -> JSONResponse:
+        log.error("firmware store unusable: %s", e.code)
+        return _err(503, "firmware_unavailable", **{"Cache-Control": "no-store"})
+
+    @app.get("/firmware/manifest")
+    async def firmware_manifest(request: Request) -> Response:
+        node: NodeAuth = request.scope[NODE_AUTH_SCOPE_KEY]
+        running = request.headers.get("x-node-firmware", "")
+        running = running if VERSION_RE.fullmatch(running) else "?"
+        try:
+            manifest = await asyncio.to_thread(firmware.current) if firmware else None
+        except FirmwareError as e:
+            return firmware_down(e)
+        if manifest is None:
+            log.info("firmware check: node=%s running=%s published=none", node.node_id, running)
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        log.info(
+            "firmware check: node=%s running=%s published=%s",
+            node.node_id,
+            running,
+            manifest.version,
+        )
+        return JSONResponse(manifest.wire(), headers={"Cache-Control": "no-store"})
+
+    @app.get("/firmware/{name:path}")
+    async def firmware_image(request: Request, name: str) -> Response:
+        node: NodeAuth = request.scope[NODE_AUTH_SCOPE_KEY]
+        m = IMAGE_NAME_RE.fullmatch(name)
+        try:
+            found = await asyncio.to_thread(firmware.image, m.group(1)) if m and firmware else None
+        except FirmwareError as e:
+            return firmware_down(e)
+        if found is None:
+            log.info("firmware image: not found node=%s", node.node_id)
+            return _err(404, "not_found", **{"Cache-Control": "no-store"})
+        manifest, data = found
+        log.info(
+            "firmware image: served node=%s version=%s bytes=%d",
+            node.node_id,
+            manifest.version,
+            len(data),
+        )
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
+
     return BearerAuth(app, settings.node_token, registry, settings.admin_token)
 
 
@@ -630,6 +690,13 @@ def check_config() -> int:
         print(f"config error: {e}", file=sys.stderr)
         return EX_CONFIG
     print(f"  registered nodes: {count}")
+    print(f"node firmware: {s.firmware_dir} (VESPER_NODE_FIRMWARE_DIR)")
+    try:
+        published = FirmwareStore(s.firmware_dir).current() if s.firmware_dir else None
+    except FirmwareError as e:
+        print(f"config error: firmware store: {e}", file=sys.stderr)
+        return EX_CONFIG
+    print(f"  published: {published.version if published else 'none'}")
     print(
         "admin claim route: "
         + ("on (VESPER_NODE_ADMIN_TOKEN)" if s.admin_token else "off (CLI approval only)")
@@ -646,8 +713,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .cli import registry_cli
 
         return registry_cli(args)
+    if args[:1] == ["firmware"]:
+        from .cli import firmware_cli
+
+        return firmware_cli(args)
     if args and args[:1] != ["serve"]:
-        print("usage: vesper-node [serve|check-config|claim|nodes]", file=sys.stderr)
+        print("usage: vesper-node [serve|check-config|claim|nodes|firmware]", file=sys.stderr)
         return EX_USAGE
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logsafe.install_log_redaction()
