@@ -519,3 +519,21 @@ def test_logsafe_masks_credential_shapes() -> None:
     cred = "vnc_" + "Q" * 43
     out = logsafe.redact_text(f"oops {cred} and X-Node-Credential: abc123 and vcs_{'s' * 43}")
     assert cred not in out and "abc123" not in out and "vcs_" + "s" * 43 not in out
+
+
+def test_transition_switch_cannot_be_reenabled_after_claim(registry) -> None:
+    legacy = "homelink-c86320"
+    registry.add_node(legacy, "office", allow_shared_token=True)
+    started = registry.start_claim(legacy)
+    registry.approve(started.code, "office")
+    registry.poll(legacy, started.secret)
+    with pytest.raises(ClaimError) as e:
+        registry.set_shared_token(legacy, True)
+    assert e.value.code == "node_claimed"
+    with pytest.raises(ClaimError):
+        registry.add_node(legacy, "office", allow_shared_token=True)
+    assert not registry.authenticate(legacy, None).ok
+    registry.set_shared_token(legacy, False)  # turning it off is always allowed
+    registry.revoke(legacy)  # explicit un-claim re-opens the transition
+    registry.set_shared_token(legacy, True)
+    assert registry.authenticate(legacy, None).via == "shared_token"

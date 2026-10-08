@@ -39,6 +39,7 @@ _MESSAGES = {
     "bad_node_id": "node id must match [A-Za-z0-9._:-]{1,128}",
     "unknown_node": "no such node in the registry",
     "claim_not_found": "no pending claim with that code (wrong, expired or replaced)",
+    "node_claimed": "node holds a credential; shared-token access is pre-claim only (revoke first)",
     "claim_locked": "too many wrong codes: approvals locked for 15 min, pending claims dropped",
 }
 

@@ -390,6 +390,8 @@ class Registry:
             raise ClaimError("bad_room")
         with self._locked() as data:
             rec = data["nodes"].setdefault(node_id, {"credential_sha256": None})
+            if allow_shared_token and credential is None and rec.get("credential_sha256"):
+                raise ClaimError("node_claimed")
             rec["room"] = room
             rec["allow_shared_token"] = bool(allow_shared_token)
             if credential is not None:
@@ -408,6 +410,9 @@ class Registry:
         with self._locked() as data:
             if node_id not in data["nodes"]:
                 raise ClaimError("unknown_node")
+            # the transition is pre-claim only: a claimed node must be revoked first
+            if allow and data["nodes"][node_id].get("credential_sha256"):
+                raise ClaimError("node_claimed")
             data["nodes"][node_id]["allow_shared_token"] = bool(allow)
 
     def revoke(self, node_id: str) -> None:

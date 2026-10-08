@@ -94,7 +94,8 @@ Rules that follow from the decision:
 - **Transition:** a board flashed before the claim flow existed has only the shared token. An
   operator can let **one registered node** in with the shared token plus `X-Node-Id`
   (`--allow-shared-token`, see *Operator*). This is off by default, set per node, and cleared
-  automatically when that node completes a claim. Unregistered nodes are always refused.
+  automatically when that node completes a claim. It cannot be switched on for a node that
+  holds a credential (`nodes revoke` it first). Unregistered nodes are always refused.
 
 ## `POST /turn`: one push-to-talk turn
 
@@ -371,7 +372,7 @@ X-Claim-Secret: vcs_<43 chars>
   | `vesper-node nodes list` | nodes, rooms, access kind, pending claims (no secrets) |
   | `vesper-node nodes add ID --room ROOM [--allow-shared-token]` | pre-register a node (and optionally allow the shared-token transition) |
   | `vesper-node nodes set-room ID ROOM` | move a node |
-  | `vesper-node nodes allow-shared-token ID on\|off` | toggle the transition for one node |
+  | `vesper-node nodes allow-shared-token ID on\|off` | toggle the transition for one node (`on` is refused once it holds a credential) |
   | `vesper-node nodes revoke ID` | drop its credential and shared-token access (it keeps its row and room) |
   | `vesper-node nodes remove ID` | delete the row |
 
