@@ -573,6 +573,8 @@ static void test_http(void)
     CHECK_STR(cap, "VESPER IS BUSY");
     struct { int st; const char *code; const char *cap; } cases[] = {
         { 401, "unauthorized", "TOKEN REFUSED" },
+        { 403, "node_unauthorized", "NODE NOT CLAIMED" },
+        { 403, NULL, "REQUEST REFUSED" },
         { 400, "bad_node_id", "BAD DEVICE ID" },
         { 400, "unsupported_protocol", "UPDATE THE FIRMWARE" },
         { 400, NULL, "REQUEST REFUSED" },
