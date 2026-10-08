@@ -270,3 +270,47 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 ## 2026-10-08 ~11:56 CDT — Build vigilance rule tightened to 30 minutes (Kevin)
 - Standing rule change: check every dispatched build at least every 30 min (was 60). Applies from here on.
 - Watcher armed on task-12 implement (PID 56157, started 11:54): fires at ~30 min elapsed if still running.
+
+## 2026-10-08 ~12:07 CDT — Task 12 (B4 Peggy) GREEN + DEPLOYED; task 13 dispatched
+- Task 12 merged (a0e728a): `/vesper-node/*` live on Peggy. Edge DoD verified: no/wrong token -> 401 `bad token`, 0 backend log lines; correct token -> full turn via peggy.fly.dev/vesper-node (transcript "Four.", MP3 fetched, 2.0 s); node token cannot reach /vesper/* (401); 15-route sweep healthy, 20 services re-registered.
+- Notes: first `fly deploy` from repo root failed (render.sh instructions wrong — deploy from .peggy/render/); implementer leaked Fly metrics_token into its transcript (metrics-only; flag rotation to Kevin); implementer saved deploy details to its own memory.
+- HUMAN GATE (for Kevin, at the board via serial): `>hatch.host=https://peggy.fly.dev/vesper-node` then `>hatch.test` to point the node at Peggy (firmware/README.md now defaults there).
+- Issue #10 -> Done. Board #11: all green except F4.
+- Task 13 (F4 OTA) dispatched to Studio: claude -p "/implement tasks/13-ota-fleet-hygiene.md" (PID 58999, 12:06). DoD needs on-device OTA test (human gate: device in hand).
+
+## 2026-10-08 ~12:20 CDT — Coordinator resumed (3rd runtime restart); avatar investigation
+- Previous coordinator died in VM restart (~12:13 CDT). Resumed with adopt-don't-restart brief. Task 13 (OTA) adopted mid-run (PID 58999, started 12:06).
+- AVATAR INVESTIGATION (Kevin: "board still shows cutesy avatar, want Vesper avatar like chat"):
+  - Finding: the evening-star owl IS compiled into the Vesper firmware. Build log: "-- Custom avatar: components/muse/avatar/muse_pixel.c". Avatar installed in all SDK checkouts. The board is almost certainly showing the OWL, not the stock Meta avatar.
+  - The owl itself is cutesy (plump baby owl, big eyes — see firmware/avatar/device-snaps/idle2.png). Kevin's issue is aesthetic mismatch, not a missing integration.
+  - The chat Vesper avatar (photorealistic cyberpunk portrait) is impossible on the 64x64 procedural pixel-art pipeline. Best achievable: pixel-art reinterpretation evoking the chat avatar.
+  - BLOCKED on Kevin's design call: keep the owl as node identity, or redesign the pixel art toward the chat avatar look.
+- SECURITY FLAG (from prior coordinator): task 12's implementer leaked the Fly metrics_token into its transcript (metrics-only). Recommend rotation — flag to Kevin.
+
+## 2026-10-08 ~12:46 CDT — Task 14 (A3 Iconic avatar redesign) created, awaiting task 13
+- Kevin's design call (~12:45 CDT): direction 2 "Iconic" — bold graphic cyborg face, huge glowing cyan cybernetic eye as focal point, silver hair as angular swept shapes, severe cyberpunk, NOT cute. Reference sketch: /Users/k3v/builds/muse-charm/avatar-ref-iconic.webp (viewed, internalized).
+- Task spec written: tasks/14-avatar-iconic-redesign.md — procedural successor to muse_pixel.c (owl retired), 64x64 palette-indexed, all 7 modes keep existing accent scheme (gold/cyan/magenta/mint/red), GIF previews + framebuffer verification + device snaps, flash to real AiPi Lite, HUMAN GATE: Kevin approves the rendered look.
+- Issue #12 created on board #11: Status=Todo, Summary="⚪ Iconic avatar redesign: bold graphic cyborg face replaces the owl (Kevin's design call)".
+- HELD: task 13 (OTA, PID 58999, started 12:06) still running — one task per host. Dispatch task 14 only after 13 lands. 30-min vigilance active.
+
+## 2026-10-08 ~12:57 CDT — Task 13 (F4 OTA) merged; task 14 dispatched
+- Task 13 merged to main (d85c10b "Merge impl/13-ota-fleet-hygiene: OTA from the node backend + fleet notes (F4)"; commits 7547461 release-key/image-caching follow-ups, 8337049 drop update for unclaimed node). Merge = green per /implement gates (no quarantine branch). No coordinator completion entry was written (coordinator died 12:13) — recorded here.
+- Issue #12 -> In Progress: Summary="🟠 Iconic avatar redesign: bold graphic cyborg face replaces the owl (Kevin's design call)".
+- Task 14 dispatched to Studio: claude -p "/implement tasks/14-avatar-iconic-redesign.md" --dangerously-skip-permissions (PID 68381, 12:58). DoD: procedural Iconic face, 7 modes w/ existing accents, GIF previews, framebuffer verify, flash real AiPi Lite, HUMAN GATE: Kevin approves the rendered look.
+- Note: Studio also running another project's task (15c-openjev-cost-lifecycle, PID 65571, separate coordinator) — tolerated per today's precedent; different repo, no shared state.
+- 30-min vigilance armed on task-14 implement.
+
+## 2026-10-08 ~13:30 CDT — Task 14 (A3 Iconic avatar) GREEN, merged, FLASHED
+- Merged to main (bc639c8 "Merge impl/14-avatar-iconic: Iconic cyborg face replaces the owl (A3)", head 635d9bf). Review: GPT-5 flagged one HIGH (screen-scaling trusts stride); Fable ruled non-blocking (owl had identical code); one-line guard added anyway (ede835e).
+- The face: angular silver hair, square cybernetic eye w/ concentric rings in metal temple plate, one blue natural eye, heavy brow, flat-line mouth, cheek circuit trace, navy collar w/ gold trim, black bg. 32 colors, procedural, same muse_pixel.h API. Owl only in git history.
+- All 7 modes + happy overlay, existing accent colors; cyber-eye glows in mode color (gold idle, cyan listening, magenta thinking, mint speaking, red error w/ glitch). Listening: scan line; thinking: circuit pulses; speaking: mouth slit w/ voice level; boot/off: scan-in / eye shrink.
+- Checks: make -C firmware test green, strict-warnings desktop avatar build + bench under sanitizers clean, ESP-IDF build green. Rebuilt from main (13:28:03, 2035712 B), flashed real AiPi Lite, flash verified, board booted w/ Wi-Fi + heartbeats, no crash. Device snaps: firmware/avatar/device-snaps/sheet.png (+ thinking/speaking).
+- Notes: idle eye is GOLD (existing scheme kept, not cyan sketch); caption bar covers collar bottom at 96px; firmware still 1.0.0 (bump before OTA publish); older SDK trees keep owl until apply-sdk.sh rerun.
+- Issue #12 -> Done: Summary="🟢 Iconic avatar redesign: cyborg face w/ glowing cyber-eye replaces the owl, flashed to board".
+- HUMAN GATE (for Kevin): approve the look — show him firmware/avatar/device-snaps/sheet.png.
+
+## 2026-10-08 ~15:05 CDT — Task 15 (claim-code display) dispatched; wake-word track opened
+- Kevin approved two follow-ups (~15:01 CDT): (1) firmware fix for the claim-code display bug (task 15), (2) wake-word investigation (design first, NO implementation until he picks a direction).
+- TASK 15: `tasks/15-claim-code-display.md` written — `vc_caption` formats "CLAIM CODE XXXX-XXXX" (20 chars), truncated to "CLAIM CODE EZ.." with no scroll. Fix: scroll long captions and/or reformat; full code must be legible. Deliver via OTA (task 13) or USB; verify on real display. Issue #13 created (Status/Summary board update BLOCKED: Studio gh token lacks project scope — needs parent/main-agent via GitHub connector).
+- Task 15 dispatched to Studio: `claude -p "/implement tasks/15-claim-code-display.md" --dangerously-skip-permissions` (~15:05 CDT). Fleet: only mac-daddy31337 valid. 30-min vigilance armed.
+- TRACK 2 (wake word): investigation running separately — recommendation to follow, no implementation until Kevin picks a direction.

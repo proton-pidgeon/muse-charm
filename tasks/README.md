@@ -20,6 +20,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 12 | [B4 — Peggy `/vesper-node/*` handle](12-peggy-node-handle.md) | done (deployed 2026-10-08, edge DoD verified live; board `hatch.host` re-provision blocked on Kevin) | 07, 08 |
 | 13 | [F4 — OTA + fleet hygiene](13-ota-fleet-hygiene.md) | built (backend firmware routes + publish CLI, node update check, ota.c install, rollback unless the server answers); host-verified (unit tests, live-ota with real signed builds, fresh ESP-IDF build 2,035,712 B) and flashed to the board (1.0.0 boots); the OTA itself blocked on Kevin claiming the board (HUMAN GATE steps in task file) | 09, 12 |
 | 14 | [A3 — Iconic avatar redesign](14-avatar-iconic-redesign.md) | done (merged bc639c8, flashed to the board, device snaps in `firmware/avatar/device-snaps/`); blocked on Kevin approving the look (HUMAN GATE) | 04, 05, 13 |
+| 15 | [F3 follow-up — Claim-code display legibility](15-claim-code-display.md) | in progress | 11, 13 |
 
 Parallel lanes: 04→05 (avatar) is independent of the backend chain 06→07→08.
 
