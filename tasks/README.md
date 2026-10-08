@@ -13,7 +13,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 05 | [A2 — Avatar on-device validation](05-avatar-on-device-validation.md) | flashed + framebuffer-verified; blocked on Kevin: re-pair + eyes-on | 04 |
 | 06 | [B3 — `channel="node"` variant in vesper-voice](06-node-channel-variant.md) | done (vesper-voice 212a79f) | – |
 | 07 | [B1 — Node backend service](07-node-backend-service.md) | done | 06 |
-| 08 | [B2 — Node registry + credentials](08-node-registry.md) | not started | 07 |
+| 08 | [B2 — Node registry + credentials](08-node-registry.md) | done (C2: shared edge bearer + per-node `X-Node-Credential`; live board needs `vesper-node nodes add homelink-c86320 --room <room> --allow-shared-token` after next service restart) | 07 |
 | 09 | [F1 — SDK fork + third `muse_hatch_*` backend](09-firmware-hatch-backend.md) | done (host-verified: build + live host turn); on-device PTT turn blocked on Kevin (flash + serial provision) | 07 |
 | 10 | [F2 — TTS playback slot](10-firmware-tts-playback.md) | done (host + on-device serial evidence: MP3 fetched, decoded 22.05→16 kHz, played, captions synced); "heard from speaker" blocked on Kevin listening | 09 |
 | 11 | [F3 — Claim flow firmware](11-firmware-claim-flow.md) | not started | 08, 09 |
