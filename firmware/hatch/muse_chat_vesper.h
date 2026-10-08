@@ -19,6 +19,9 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+
+#include "vesper_proto.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -46,8 +49,39 @@ void muse_hatch_set_node_id(const char *node_id);
  */
 void vesper_node_forget_credential(void);
 bool vesper_node_forget_credential_now(void);
-/* {"node_id":...,"credential":true|false,"claim":"claimed|starting|pending"}: presence only, for >status. */
+/* {"node_id":...,"credential":true|false,"claim":"claimed|starting|pending","firmware":"1.0.0","update":"..."}:
+ * presence only, for >status. */
 int vesper_node_status_json(char *out, size_t cap);
+
+/*
+ * Firmware updates (task 13, F4): see vesper_ota.h. A claimed node asks its
+ * server for the published firmware VO_FIRST_CHECK_MS after boot, then every
+ * 6 hours (plus a per-node jitter), between turns, and installs a strictly
+ * newer version through the installer app.c registers (the SDK's ota.c,
+ * ota_start_request).
+ *
+ * The installer gets everything it needs in *req (copy it: the header values
+ * are wiped when it returns) and calls done(applied, detail) when the
+ * install ends. applied: the device restarts as soon as done returns (done
+ * waits for the node to be idle first). detail is a fixed, secret-free reason.
+ */
+typedef struct {
+    const char *url;               /* <host>/firmware/<sha256>.bin */
+    const vp_header_t *headers;    /* bearer, node id, node credential, running version */
+    int nheaders;
+    const char *version;           /* the image must carry exactly this version */
+    const uint8_t *sha256;         /* 32 bytes: what the image must hash to */
+    uint32_t size;                 /* its exact size */
+} vesper_update_t;
+typedef void (*vesper_update_done_t)(bool applied, const char *detail);
+typedef void (*vesper_updater_t)(const vesper_update_t *req, vesper_update_done_t done);
+
+void vesper_node_set_updater(vesper_updater_t updater);
+/* Check for an update now (serial >ota.check), once the node is claimed and on Wi-Fi. */
+void vesper_node_check_update(void);
+/* The update server has answered a check since boot (a manifest, or nothing published).
+ * app.c keeps a freshly installed image only once this is true (else it rolls back). */
+bool vesper_node_update_channel_ok(void);
 
 #ifdef __cplusplus
 }

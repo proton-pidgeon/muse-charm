@@ -170,6 +170,10 @@ vp_json_kind_t vp_json_string(const char *json, size_t len, const char *key, cha
 /* The top-level boolean member `key`; *found false if it's missing or not a bool. */
 bool vp_json_bool(const char *json, size_t len, const char *key, bool *found);
 
+/* The top-level member `key` if it is a plain non-negative integer (digits only: no sign,
+ * fraction or exponent) no larger than UINT32_MAX. False otherwise (*out is then 0). */
+bool vp_json_uint(const char *json, size_t len, const char *key, uint32_t *out);
+
 /* ---- SSE framing ---- */
 
 typedef void (*vp_sse_event_cb)(void *ctx, const char *event, const char *data, size_t len);

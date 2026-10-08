@@ -9,10 +9,11 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `apply-sdk.sh <SDK_DIR>` | Idempotent. Deletes the Meta transport, applies `sdk-patches/*.patch`, installs `hatch/` and the avatar, and checks that `main/voice.c` is unchanged |
 | `sdk-patches/delete.txt` | Files the patch set removes from the SDK |
 | `sdk-patches/000N-*.patch` | Edits to tracked SDK files (`git apply` format against `b1a3822`) |
-| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10) and the claim flow, node credential and BLE host (task 11), installed as `<SDK>/esp32/components/muse/vesper/` |
-| `hatch/test/` | Host tests of the protocol core, the claim flow and the speech helpers, the log-hygiene check, and the live-turn and live-claim harnesses |
+| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11) and the firmware update check (task 13), installed as `<SDK>/esp32/components/muse/vesper/` |
+| `hatch/VERSION` | The firmware version (`MAJOR.MINOR.PATCH`) the build stamps into the image (task 13); bump it for every release |
+| `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers and the update check, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
 | `avatar/` | The Vesper owl avatar (task 04) |
-| `Makefile` | `make -C firmware test`, `make -C firmware live-turn` and `make -C firmware live-claim` (host only, no ESP-IDF) |
+| `Makefile` | `make -C firmware test`, `live-turn`, `live-claim` and `live-ota` (host only, no ESP-IDF) |
 
 ## Decision (task 09): a patch set tracked in THIS repo, not an SDK fork
 
@@ -30,7 +31,11 @@ stays a re-clonable upstream at `b1a3822`, and `apply-sdk.sh` rebuilds the Vespe
    - since task 11, `0004`: the claim flow's sources in the build, the node's BLE host behind
      `app_ble_companion_set` and Link's `.ble_started`, the credential forgotten on a setup
      reset, and the serial console's `>status` `vesper` block and `>claim.forget` (see
-     *Claim flow* below).
+     *Claim flow* below);
+   - since task 13, `0005`: `ota.c` gains `ota_start_request` (the stock `ota_start` is
+     unchanged), `app.c` registers it as the node's installer and keeps a fresh image only once
+     the update server has answered, the console's `>ota.check`, `vesper/vesper_ota.c` in the
+     build, and `PROJECT_VER` from `hatch/VERSION` (see *Firmware updates* below).
 
    `0004` edits lines that `0002` added (in `app.c` and `muse_glue.c`), so `apply-sdk.sh`
    can't ask "is `0002` applied?" of `0002` alone once `0004` is on top. It first asks it of the
@@ -70,7 +75,9 @@ session), and the `noise_core` component.
 
 The image was 1,839,104 bytes after task 09, down from 2,166,784 for the avatar-only stock
 build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,712 bytes
-(`0x1f1000`, 51% of the app partition free).
+(`0x1f1000`, 51% of the app partition free). Task 13's update check keeps it at 2,035,712
+bytes signed (2,031,616 unsigned; the signed image is padded to the signature block), so an
+update always fits the other 4 MiB slot.
 
 **Kept byte-identical:**
 
@@ -79,7 +86,9 @@ build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,
 - the LVGL UI (`muse_ui.c`, `muse_settings_ui.c`, `muse_menu.c`)
 - `muse_voice.c`, the AIPI's push-to-talk task, which talks to the new backend through the
   unchanged `muse_hatch_*` API
-- `muse_wifi`, `identity.c`, `ota.c`, `muse_ble.c`
+- `muse_wifi`, `identity.c`, `muse_ble.c`
+- `ota.c`'s stock path (`ota_start`, the version gate, the download task) is unchanged; task 13
+  adds `ota_start_request` beside it (patch `0005`) rather than writing a second OTA client
 
 `apply-sdk.sh` fails if `voice.c` changes.
 
@@ -272,7 +281,11 @@ What was weighed:
   (`vesper-node nodes revoke homelink-<mac>`) without re-keying the fleet. Stealing it needs
   physical access to the board. A lost or stolen node is handled by revoking it.
 - **Revisit** when the fleet is built for real: enable secure boot v2, flash encryption (release)
-  and `CONFIG_HOMEHUB_NVS_ENCRYPTION` together on fresh production boards, as part of task 13.
+  and `CONFIG_HOMEHUB_NVS_ENCRYPTION` together on fresh production boards.
+- **Task 13 kept this decision.** OTA works on the dev boards as they are, without burning
+  anything; see *Firmware updates* for what protects an update instead (https only, the
+  manifest's SHA-256, the image signature, rollback). The production hardening above, plus a
+  private release signing key, is still for the real fleet build.
 
 ### Credentials never logged: evidence (task 11 DoD)
 
@@ -579,6 +592,185 @@ The agents don't flash the board or open its serial port. Steps for Kevin (or Ve
    - `NODE NOT CLAIMED`, then a new `CLAIM CODE` on the screen.
 
    Approve it as in step 4.
+
+### Firmware updates (task 13, F4)
+
+The SDK's `ota.c` is kept (spec §2) and now updates the node from the Vesper node backend. Its
+only trigger used to be the Meta app's BLE pairing (deleted in task 09). The wire side is
+`docs/node-wire-protocol.md`, *Firmware updates*.
+
+- **Version.** `firmware/hatch/VERSION` (`1.0.0`) is the image's `PROJECT_VER`
+  (`esp32/CMakeLists.txt`, patch `0005`; it replaces the SDK's `version.txt`, `999.0.0`).
+  `MAJOR.MINOR.PATCH` only. Bump it for every release.
+- **Check** (`vesper_ota.c`, pure C and host-tested; the I/O in `muse_chat_vesper.c`, on the
+  hatch task between turns). A claimed, online node with an `https://` server URL runs
+  `GET <host>/firmware/manifest` (bearer, `X-Node-Id`, `X-Node-Credential`,
+  `X-Node-Firmware`):
+  - 10 s after boot, then every 6 h plus a fixed per-node jitter of up to 30 min;
+  - at once on `>ota.check` (serial);
+  - a failure backs off from 1 min, doubling, up to 6 h;
+  - except on probation (a fresh image, `PENDING_VERIFY`, before its first answered check): a
+    failed check is retried every 20 s, no doubling, so about 15 checks fit app.c's 300 s window
+    and a few minutes of server or edge downtime right after the update (a backend restart, say)
+    doesn't roll back, and blacklist, a good image. The backoff alone fits only 3.
+
+  Why this trigger: a boot check makes "reboot it" the way to pull an update at once (a power
+  cycle does it); the 6 h poll means a fleet converges within a few hours with no push channel
+  and no new inbound port on the node (it has none, and Peggy only proxies node-initiated
+  requests); the serial command covers the bench. A push from the backend would need the node
+  to hold a connection open, which v1 doesn't.
+- **Decision.** Install only a version strictly newer than the running one; never an equal or
+  older one (no downgrade), never one this node rolled back before (read from the invalid slot
+  at boot), never one larger than the update slot. A running version that isn't
+  `MAJOR.MINOR.PATCH` (a dev build) is never updated over the air.
+- **https only.** The image signing key is still the SDK's shared development key
+  (`dev_signing_key.pem`, public, `CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT`). So the
+  transport must be trusted: a node whose `hatch.host` is `http://` (the LAN socat stopgap)
+  skips update checks (`>status` `"update":"needs_https"`) and keeps working for turns. Use
+  `https://peggy.fly.dev/vesper-node` for nodes that should be updated.
+- **Install** (`main/ota.c`, `ota_start_request`, on its own internal-RAM task, 16 KB stack;
+  the node keeps answering turns while it downloads):
+  1. nothing while the running image is still `PENDING_VERIFY` (its slot is the only known-good
+     one);
+  2. `GET <host>/firmware/<sha256>.bin` with the same headers, no redirects (so they can't
+     leave the server), into the other app slot;
+  3. the image's descriptor must carry exactly the manifest's version, and ota.c's own stock
+     "newer than running" gate still applies;
+  4. exactly `size` bytes, and the slot read back must hash to the manifest's SHA-256, all
+     **before** `esp_https_ota_finish()`;
+  5. `esp_https_ota_finish()` verifies the image (its own SHA-256 and RSA signature) and
+     switches the boot partition;
+  6. the restart waits for the node to be idle (a turn in progress finishes; at most 2 min);
+  7. if the node lost its credential meanwhile (`>claim.forget`, a setup reset, a `403`), the
+     update is dropped instead: the boot partition goes back to the running image (marked valid),
+     so the restart ota.c still does comes back on the old firmware, which claims again and is
+     offered the update again. Booting the new image unclaimed would fail its channel check, roll
+     back and blacklist a good version.
+- **Coming back.** The new image boots `PENDING_VERIFY`. `app.c`'s `ota_verify_task` keeps the
+  stock 300 s window but, for a fresh image, now needs Wi-Fi **and** an answered update check
+  (`200` or `204` with the node's credential). That only happens if the node still has its
+  credential and the backend accepts it, so "comes back claimed" is enforced, not just hoped
+  for. Otherwise the bootloader rolls back, and the old image never installs that version
+  again. NVS (Wi-Fi, server URL, bearer, `node_cred`) is a separate partition, so an update
+  never touches the node's identity.
+- **Logs.** Versions, sizes, HTTP statuses, verdicts and timings only. The bearer and credential
+  live in `s_turn.auth`/stack buffers that are wiped after each request, and in ota.c's copies,
+  which are wiped when the OTA ends. `check_log_hygiene.py` covers the new code and patch.
+- **Operator** (on the Studio):
+
+  ```sh
+  echo 1.0.1 > firmware/hatch/VERSION && git commit -am "firmware 1.0.1"   # the release
+  firmware/apply-sdk.sh <SDK> && (cd <SDK>/esp32 && tools/muse/board.sh build aipi)
+  cd backend && uv run --locked vesper-node firmware publish <SDK>/esp32/build-muse-aipi/muse-gadget.bin
+  uv run --locked vesper-node firmware status        # what is published
+  uv run --locked vesper-node firmware withdraw      # stop a rollout
+  ```
+
+  `publish` checks the image (ESP32-S3, `muse-gadget`, `MAJOR.MINOR.PATCH`, at most 4 MiB, newer
+  than the published version) and stores it in `~/.config/vesper-voice/firmware/` (mode 700). The
+  backend's log shows each node's check (`firmware check: node=... running=... published=...`)
+  and download, which is how to watch a rollout.
+- **Host checks.** `make -C firmware test` runs `test_vesper_ota` (versions, manifest parsing incl.
+  truncated and fuzzed bodies, header injection, the verdicts, https-only, the schedule and its
+  jitter). `make -C firmware live-ota [OTA_IMAGE=<build>/muse-gadget.bin]` runs the node's update
+  code against a throwaway backend (temp registry and store, dummy tokens) and checks the
+  download's size and SHA-256, up-to-date, no downgrade, a refused credential and a withdrawn
+  release. `make -C backend verify` covers the routes (auth, wrong credential, revoked node, path
+  traversal, tampered or insecure store) and the CLI.
+
+### Fleet notes (task 13)
+
+- **One firmware.** Every node runs the identical image. A node is made distinct only by its NVS
+  identity: Wi-Fi, `hatch.host`, `hatch.token` (the shared edge bearer), and the `node_cred` its
+  claim gave it. The node id is not configured at all: it is `homelink-<mac>`
+  (`identity_node_id()`), from the chip.
+- **N nodes = N registry rows, N claim ceremonies, one backend.** Each node is flashed once over
+  USB with the current release, provisioned (Wi-Fi, server URL, bearer; serial or BLE), and
+  claimed by reading its on-screen code (`vesper-node claim XXXX-XXXX --room <room>`). That
+  gives it its row in `nodes.json` (room, credential hash). One `com.vesper.node` serves them
+  all; the room comes from the registry, not the firmware.
+- **Rolling an update to the fleet:** bump `hatch/VERSION`, build, `vesper-node firmware
+  publish`. Every claimed node with an https server URL installs it within about 6.5 h (or at
+  once after a reboot or `>ota.check`), and keeps it only if it gets back to the backend with
+  its credential. Watch `firmware check`/`firmware image` lines in the backend log; a node still
+  reporting the old version after a check has refused it (see its serial log) or rolled it back.
+  To stop a bad rollout: `vesper-node firmware withdraw` (nodes that already took it keep it;
+  publish a newer fixed version to move them on, since nodes never downgrade).
+- **A revoked node gets no updates** (`403` on the manifest), like it gets no turns.
+- **Not built here** (anti-deliverable): the multi-room expansion itself. The registry, rooms and
+  updates are per node already; adding nodes is the procedure above.
+- **Before a real fleet:** replace `dev_signing_key.pem` with a private release key kept out of
+  git (each node's running image then needs one USB flash signed with the new key, since the
+  running image's key verifies the next), and the production hardening in *NVS encryption:
+  decision*.
+- **Follow-ups (review advisories, not done in task 13):**
+  - **Generate the private release key before more nodes are USB-flashed.** Every node flashed
+    with a dev-key image has to be USB-flashed again to move to the release key; doing it first
+    keeps that to one board. Optionally, have `vesper-node firmware publish` check the image's
+    signature block against the release public key, so a wrongly signed build is refused on the
+    Studio rather than by every node.
+  - **Cache or stream the image in `FirmwareStore`.** `GET /firmware/<sha256>.bin` re-reads and
+    re-hashes up to 4 MiB per request. Fine for a few nodes; for a fleet, verify once per
+    publish (or per file change) and stream the file.
+
+### On-device check (task 13: an OTA served by our backend, human gate)
+
+Done by the task-13 agent on 2026-10-08, with the coordinator's authorisation, on the AiPi at
+`/dev/cu.usbmodem83201`: the board was USB-flashed with the task-13 build (`1.0.0`, from a fresh
+`b1a3822` worktree via `apply-sdk.sh`). Serial log:
+
+```
+link.app:   Version:  1.0.0
+vesper_cred: node credential: none yet (the node will claim)
+vesper_chat: firmware 1.0.0; updates from the node backend (first check 10 s after the node is claimed and online)
+link.app: OTA image validated (Wi-Fi up)
+vesper_chat: claim: start: refused (HTTP 404); next try in 60 s
+@status {..."vesper":{"node_id":"homelink-c86320","credential":false,"claim":"starting","firmware":"1.0.0","update":"not_checked"},...}
+@ota.check ok      (no check: the node isn't claimed)
+```
+
+The board is **unclaimed** (the live registry has no nodes), and the live `com.vesper.node` still
+runs code from before task 08 (`/claim/start` is a 404), so the OTA itself could not run on the
+device: claiming needs a person to read the code off the screen (task 11's human gate). Steps
+for Kevin, once this branch is merged:
+
+1. **Backend with the task 08 + 13 code** (claim and firmware routes):
+
+   ```sh
+   cd ~/builds/muse-charm/muse-charm && git pull && make -C backend install
+   launchctl kickstart -k gui/$(id -u)/com.vesper.node
+   make -C backend check-config     # "node firmware: ... published: none"
+   ```
+2. **Point the board at Peggy** (updates need https): in a serial monitor
+   (`idf.py -B build-muse-aipi -p /dev/cu.usbmodem83201 monitor`, ESP-IDF exported, in
+   `~/builds/muse-charm/scratch/sdk-impl-13-fresh/esp32`) type
+   `>hatch.host=https://peggy.fly.dev/vesper-node`, then `>hatch.test` (expect `HTTP 200`).
+3. **Claim it** (task 11's gate): read `CLAIM CODE XXXX-XXXX` off the screen, then
+   `cd backend && uv run --locked vesper-node claim XXXX-XXXX --room <room>`. Within ~10 s the
+   log shows `claim: claimed, room <room>` and then
+   `update check: up to date (HTTP 204 ...; running 1.0.0)`.
+4. **Publish 1.0.1** (already built from the same tree with `VERSION` = `1.0.1`):
+
+   ```sh
+   uv run --locked vesper-node firmware publish ~/builds/muse-charm/scratch/ota-test/muse-gadget-1.0.1.bin
+   ```
+5. **Update:** type `>ota.check` (or reboot the board, or wait up to ~6.5 h). Expect, in order:
+   - `update check: newer version published (HTTP 200 ...; running 1.0.0, published 1.0.1)`;
+   - `update: installing 1.0.1 (2035712 bytes) over 1.0.0`;
+   - `link.ota: image matches the manifest (2035712 bytes, SHA-256)`;
+   - `update: installed and verified; restarting into it once the node is idle`, a restart;
+   - `Version:  1.0.1`, `running a PENDING_VERIFY OTA image; awaiting health check`,
+     `node credential: stored`, `update check: up to date (HTTP 200 ...; running 1.0.1, published 1.0.1)`,
+     `OTA image validated (Wi-Fi up, update server answered)`.
+
+   The backend log shows `firmware image: served node=homelink-c86320 version=1.0.1`.
+6. **Claimed and working:** `>status` shows `"credential":true,"claim":"claimed","firmware":"1.0.1"`;
+   `vesper-node nodes list` still shows the node with `access=credential`; a push-to-talk turn
+   gets a spoken reply.
+7. **No secret on serial:** `grep -cE 'v(nc|cs)_' <the monitor log>` prints `0`.
+
+To go back to `http://192.168.5.16:8797` (the LAN stopgap) afterwards, set `>hatch.host=` again;
+turns work over either, updates only over https.
 
 ## Decision: the avatar is a patch set tracked in THIS repo (not an SDK fork)
 

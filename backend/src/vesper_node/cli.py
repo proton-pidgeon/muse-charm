@@ -18,6 +18,17 @@ claim flow (task 11 / F3): that one registered node may send turns with only the
 automatically when the node completes a claim. Unregistered nodes are always refused.
 
 Output never contains a claim code, claim secret or credential.
+
+Node firmware (task 13, :mod:`vesper_node.firmware`):
+
+    vesper-node firmware publish BIN [--force]          publish a build to every node
+    vesper-node firmware status                         what is published
+    vesper-node firmware withdraw                       unpublish (nodes keep what they run)
+
+``BIN`` is the app image ``board.sh build aipi`` writes (``build-muse-aipi/muse-gadget.bin``,
+signed). Its version comes from the image (``firmware/hatch/VERSION``). Claimed nodes pick it
+up at their next check (at boot, then every 6 hours, or at once with ``>ota.check`` on the
+serial console).
 """
 
 from __future__ import annotations
@@ -27,7 +38,8 @@ import datetime as dt
 import sys
 from collections.abc import Sequence
 
-from .config import ConfigError, resolve_registry_path
+from .config import ConfigError, resolve_firmware_dir, resolve_registry_path
+from .firmware import FirmwareError, FirmwareStore
 from .registry import ClaimError, Registry, RegistryError
 
 EX_USAGE = 64
@@ -145,6 +157,55 @@ def registry_cli(argv: Sequence[str]) -> int:
         print(f"refused: {_MESSAGES.get(e.code, e.code)}", file=sys.stderr)
         return EX_DATAERR
     except (RegistryError, ConfigError) as e:
+        print(f"config error: {e}", file=sys.stderr)
+        return EX_CONFIG
+    return 0
+
+
+def _firmware_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="vesper-node firmware", description="node firmware updates")
+    sub = ap.add_subparsers(dest="action", required=True)
+    pub = sub.add_parser("publish", help="publish an app image to every node")
+    pub.add_argument("image")
+    pub.add_argument(
+        "--force",
+        action="store_true",
+        help="publish even if not newer than what is published (nodes still refuse a downgrade)",
+    )
+    sub.add_parser("status", help="show the published release")
+    sub.add_parser("withdraw", help="unpublish; nodes stay on what they run")
+    return ap
+
+
+def firmware_cli(argv: Sequence[str]) -> int:
+    try:
+        args = _firmware_parser().parse_args(list(argv)[1:])
+    except SystemExit as e:
+        return EX_USAGE if e.code else 0
+    try:
+        store = FirmwareStore(resolve_firmware_dir())
+        if args.action == "publish":
+            m = store.publish(args.image, force=args.force)
+            print(f"published: version {m.version}, {m.size} bytes, sha256 {m.sha256}")
+            print(f"store: {store.dir}")
+            print("claimed nodes install it at their next check (boot, every 6 h, or >ota.check).")
+        elif args.action == "status":
+            m = store.current()
+            print(f"store: {store.dir}")
+            if m is None:
+                print("published: none")
+            else:
+                print(
+                    f"published: version {m.version}, {m.size} bytes, sha256 {m.sha256}, "
+                    f"at {_when(m.published_at)}"
+                )
+        elif args.action == "withdraw":
+            m = store.withdraw()
+            print(f"withdrawn: {m.version}" if m else "nothing was published")
+    except FirmwareError as e:
+        print(f"refused: {e}", file=sys.stderr)
+        return EX_DATAERR
+    except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         return EX_CONFIG
     return 0

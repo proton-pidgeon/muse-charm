@@ -13,6 +13,8 @@ Resolution order for every key: process environment, then the **node** env file
   the ``POST /admin/claim`` route (task 08). Without it, claims are approved by the local CLI only.
 * ``VESPER_NODE_REGISTRY_FILE`` (optional) moves the node registry from its default
   ``~/.config/vesper-voice/nodes.json``.
+* ``VESPER_NODE_FIRMWARE_DIR`` (optional) moves the published node firmware (task 13) from its
+  default ``~/.config/vesper-voice/firmware``.
 * Provider and brain keys (``ELEVENLABS_API_KEY``, ``DEEPGRAM_API_KEY``,
   ``VESPER_STT_PROVIDER``, ``VESPER_PHONE_TTS_VOICE_ID``, ``VESPER_BRAIN_URL``,
   ``VESPER_BRAIN_TOKEN``) come from the existing voice env file.
@@ -41,6 +43,8 @@ DEFAULT_NODE_ENV_FILE = Path("~/.config/vesper-voice/node.env")
 DEFAULT_VOICE_ENV_FILE = Path("~/.config/vesper-voice/env")
 REGISTRY_FILE_VAR = "VESPER_NODE_REGISTRY_FILE"
 DEFAULT_REGISTRY_FILE = Path("~/.config/vesper-voice/nodes.json")
+FIRMWARE_DIR_VAR = "VESPER_NODE_FIRMWARE_DIR"
+DEFAULT_FIRMWARE_DIR = Path("~/.config/vesper-voice/firmware")
 
 DEFAULT_HOST = "::"  # same precedent as the live brain: 6PN + loopback
 DEFAULT_PORT = 8796
@@ -158,6 +162,9 @@ class Settings:
     # Node registry (task 08). None only in hand-built test settings: create_app then needs
     # an explicit registry, so a test can never touch the real ~/.config file.
     registry_file: str | None = None
+    # Published node firmware (task 13). None in hand-built test settings: no firmware routes
+    # then serve anything (manifest 204) unless create_app is given a store.
+    firmware_dir: str | None = None
     admin_token: str | None = None
     env_files: tuple[str, ...] = field(default=())
 
@@ -252,6 +259,7 @@ def load_settings(
         tts_voice_id=voice_id,
         tts_off=(get("VESPER_NODE_TTS") or "").lower() in TTS_OFF_VALUES,
         registry_file=str(Path(get(REGISTRY_FILE_VAR) or DEFAULT_REGISTRY_FILE).expanduser()),
+        firmware_dir=str(Path(get(FIRMWARE_DIR_VAR) or DEFAULT_FIRMWARE_DIR).expanduser()),
         admin_token=admin_token,
         env_files=(str(node_path), str(voice_path)),
     )
@@ -278,3 +286,13 @@ def resolve_registry_path(environ: Mapping[str, str] | None = None) -> Path:
         load_env_file(node_path).get(REGISTRY_FILE_VAR)
     )
     return Path(value or DEFAULT_REGISTRY_FILE).expanduser()
+
+
+def resolve_firmware_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Firmware store for the CLI: process env, then ``node.env``. Needs no tokens."""
+    env = dict(os.environ if environ is None else environ)
+    node_path = Path(env.get(NODE_ENV_FILE_VAR) or DEFAULT_NODE_ENV_FILE).expanduser()
+    value = _clean(env.get(FIRMWARE_DIR_VAR)) or _clean(
+        load_env_file(node_path).get(FIRMWARE_DIR_VAR)
+    )
+    return Path(value or DEFAULT_FIRMWARE_DIR).expanduser()

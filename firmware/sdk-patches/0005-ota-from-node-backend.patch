@@ -1,0 +1,464 @@
+diff --git a/esp32/CMakeLists.txt b/esp32/CMakeLists.txt
+--- a/esp32/CMakeLists.txt
++++ b/esp32/CMakeLists.txt
+@@ -14,5 +14,13 @@
+ 
+ cmake_minimum_required(VERSION 3.16)
+ include("${CMAKE_CURRENT_LIST_DIR}/cmake/project.cmake")
++# Vesper (task 13): the firmware version is muse-charm's firmware/hatch/VERSION
++# (MAJOR.MINOR.PATCH, installed by apply-sdk.sh), not version.txt. A node
++# installs an update only if its version is newer than the one it runs.
++set(VESPER_VERSION_FILE "${CMAKE_CURRENT_LIST_DIR}/components/muse/vesper/VERSION")
++if(EXISTS "${VESPER_VERSION_FILE}")
++    file(STRINGS "${VESPER_VERSION_FILE}" PROJECT_VER LIMIT_COUNT 1)
++    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VESPER_VERSION_FILE}")
++endif()
+ project(muse-gadget)
+ include("${CMAKE_CURRENT_LIST_DIR}/cmake/validate_config.cmake")
+diff --git a/esp32/components/muse/CMakeLists.txt b/esp32/components/muse/CMakeLists.txt
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -65,6 +65,8 @@
+     # Vesper (task 11): the claim flow's core, the node credential in NVS and
+     # the node's BLE host (Muse's setup service plus the claim service).
+     list(APPEND srcs "vesper/vesper_claim.c" "vesper/vesper_cred.c" "vesper/vesper_ble.c")
++    # Vesper (task 13): the firmware update check (the install is main/ota.c's).
++    list(APPEND srcs "vesper/vesper_ota.c")
+     if(CONFIG_MUSE_BOARD_WAVESHARE_S3_175C OR CONFIG_MUSE_BOARD_WAVESHARE_S3_175)
+         # One driver: the 1.75 differs only in pins (its BSP's) and its PWR key.
+         list(APPEND srcs "boards/board_waveshare_s3_175c.c" "boards/muse_lcd_bands.c")
+@@ -97,7 +99,7 @@
+ 
+ set(muse_priv_requires
+     esp_timer esp_driver_usb_serial_jtag esp_psram nvs_flash
+-    bt esp-tls mbedtls esp_app_format esp_http_client
++    bt esp-tls mbedtls esp_app_format esp_http_client app_update
+     minimp3
+     esp_lcd esp_adc esp_driver_i2s esp_driver_ledc esp_driver_spi esp_driver_uart esp_wifi
+     esp_driver_pcnt)
+diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_input.c
+--- a/esp32/components/muse/muse_input.c
++++ b/esp32/components/muse/muse_input.c
+@@ -576,7 +576,7 @@
+         char *json = heap_caps_malloc(cap, MUSE_BIG_CAPS);
+         if (json) {
+             /* Vesper (task 11): the claim state, presence only (never a credential or the code). */
+-            char vesper[192];
++            char vesper[256];
+             vesper_node_status_json(vesper, sizeof(vesper));
+             muse_ble_status_json(json, cap);
+             printf("@status {\"board\":\"%s\",\"chat\":%s,\"vesper\":%s,\"device\":%s}\n", muse_board->name,
+@@ -586,6 +586,12 @@
+         }
+         return true;
+     }
++    if (!strcmp(line, "ota.check")) {
++        vesper_node_check_update();   /* task 13: ask the node backend for new firmware now */
++        printf("@ota.check ok\n");
++        fflush(stdout);
++        return true;
++    }
+     if (!strcmp(line, "claim.forget")) {
+         vesper_node_forget_credential();   /* the node claims again, with a new code */
+         printf("@claim.forget ok\n");
+@@ -652,7 +658,8 @@
+  * the device's state, "power" the battery meter (muse_battery.h) and
+  * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
+  * two minutes asleep on battery would; 'w' rejoins), "claim.forget" forgets
+- * the Vesper node credential so the node claims again, "face=" shows a face
++ * the Vesper node credential so the node claims again, "ota.check" asks the
++ * Vesper node backend for new firmware now, "face=" shows a face
+  * (see set_face), and "chat=" sends a typed message to Hatch (see chat_line
+  * and tools/muse/chat.py).
+  */
+diff --git a/esp32/main/app.c b/esp32/main/app.c
+--- a/esp32/main/app.c
++++ b/esp32/main/app.c
+@@ -59,6 +59,7 @@
+ #include "led_status.h"
+ #include "button.h"
+ #include "diagnostic_log.h"
++#include "ota.h"
+ #if CONFIG_HOMEHUB_VOICE
+ #include "voice.h"
+ #endif
+@@ -84,8 +85,9 @@
+ #define WIFI_QUICK_MIN_RSSI     (-75)   // near enough to join without a full scan
+ 
+ // OTA rollback: how long a freshly-installed (PENDING_VERIFY) image has to
+-// join Wi-Fi before the bootloader reverts it. Wi-Fi is the channel any
+-// future OTA arrives on (task 13), so an image that can't reach it is
++// join Wi-Fi and get an answer from the node backend's update check (task 13)
++// before the bootloader reverts it. That is the channel any future update
++// arrives on, so an image that can't reach it (or is no longer claimed) is
+ // reverted to keep the device recoverable.
+ #define OTA_VERIFY_TIMEOUT_US (300LL * 1000000LL)
+ 
+@@ -450,14 +452,26 @@
+ // startup. Marking the running image valid (a) commits a PENDING_VERIFY image
+ // so the bootloader stops trying to revert it, and (b) blesses a normal boot
+ // so the running slot becomes a valid rollback target for the *next* OTA.
+-// Validation is gated on joining Wi-Fi, the channel an OTA arrives on.
++// Validation is gated on joining Wi-Fi, the channel an OTA arrives on, and
++// (Vesper, task 13) for a freshly installed image also on the node backend
++// answering an update check with the node's credential: the image can still
++// be updated, and the node came back claimed.
++static bool update_channel_ok(void) {
++#if CONFIG_MUSE_ENABLED
++    return vesper_node_update_channel_ok();
++#else
++    return true;
++#endif
++}
++
+ static void ota_verify_task(void *arg) {
+     (void)arg;
+     int64_t deadline = esp_timer_get_time() + OTA_VERIFY_TIMEOUT_US;
+     while (esp_timer_get_time() < deadline) {
+-        if (wifi_mgr_is_connected()) {
++        if (wifi_mgr_is_connected() && (!s_ota_pending_verify || update_channel_ok())) {
+             if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+-                ESP_LOGI(TAG, "OTA image validated (Wi-Fi up)");
++                ESP_LOGI(TAG, "OTA image validated (Wi-Fi up%s)",
++                         s_ota_pending_verify ? ", update server answered" : "");
+             } else {
+                 ESP_LOGE(TAG, "esp_ota_mark_app_valid_cancel_rollback failed");
+             }
+@@ -478,8 +492,39 @@
+     }
+     stack_monitor_record(NULL);
+     vTaskDelete(NULL);
++}
++
++#if CONFIG_MUSE_ENABLED
++// Vesper (task 13): the node's update check (muse_chat_vesper.c) installs
++// through ota.c. These adapt its request and report to ota_start_request.
++static vesper_update_done_t s_update_done;
++
++static void vesper_update_status(const ota_event_t *ev, void *user) {
++    (void)user;
++    if (s_update_done) {
++        s_update_done(ev->result == OTA_RESULT_APPLIED, ev->detail ? ev->detail : "");
++    }
+ }
+ 
++static void vesper_updater(const vesper_update_t *u, vesper_update_done_t done) {
++    ota_header_t h[OTA_REQUEST_MAX_HEADERS];
++    size_t n = 0;
++    for (int i = 0; i < u->nheaders && n < OTA_REQUEST_MAX_HEADERS; i++) {
++        h[n++] = (ota_header_t){ u->headers[i].name, u->headers[i].value };
++    }
++    ota_request_t req = {
++        .url = u->url,
++        .headers = h,
++        .nheaders = n,
++        .expected_version = u->version,
++        .expected_sha256 = u->sha256,
++        .expected_size = u->size,
++    };
++    s_update_done = done;
++    ota_start_request(&req, vesper_update_status, NULL);   // copies everything
++}
++#endif
++
+ // ---- Heap snapshot helper ---------------------------------------------------
+ 
+ static void heap_snapshot(const char *label) {
+@@ -555,6 +600,9 @@
+         ESP_LOGW(TAG, "running a PENDING_VERIFY OTA image; awaiting health check");
+     }
+     xTaskCreate(ota_verify_task, "ota_verify", 4096, NULL, 4, NULL);
++#if CONFIG_MUSE_ENABLED
++    vesper_node_set_updater(vesper_updater);
++#endif
+ 
+ #if CONFIG_HOMEHUB_VOICE
+     voice_init();
+diff --git a/esp32/main/ota.c b/esp32/main/ota.c
+--- a/esp32/main/ota.c
++++ b/esp32/main/ota.c
+@@ -40,6 +40,9 @@
+ #include "esp_https_ota.h"
+ #include "esp_http_client.h"
+ #include "esp_crt_bundle.h"
++#include "esp_ota_ops.h"
++#include "esp_partition.h"
++#include "mbedtls/private/sha256.h"
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/task.h"
+ 
+@@ -56,8 +59,67 @@
+     bool force;
+     ota_status_cb cb;
+     void *user;
++    // Vesper (task 13): set by ota_start_request (see ota.h).
++    bool checked;
++    size_t nheaders;
++    char *hdr_name[OTA_REQUEST_MAX_HEADERS];
++    char *hdr_value[OTA_REQUEST_MAX_HEADERS];
++    char expected_version[33];
++    uint8_t expected_sha256[32];
++    size_t expected_size;
+ } ota_ctx_t;
+ 
++// One request-mode OTA at a time; its headers go on the client in
++// request_client_init (esp_https_ota's init callback takes no user pointer).
++static ota_ctx_t *s_request_ctx;
++static volatile bool s_request_busy;
++
++static esp_err_t request_client_init(esp_http_client_handle_t client) {
++    ota_ctx_t *ctx = s_request_ctx;
++    for (size_t i = 0; ctx && i < ctx->nheaders; i++) {
++        esp_err_t err = esp_http_client_set_header(client, ctx->hdr_name[i], ctx->hdr_value[i]);
++        if (err != ESP_OK) return err;
++    }
++    return ESP_OK;
++}
++
++static void ctx_free(ota_ctx_t *ctx) {
++    for (size_t i = 0; i < OTA_REQUEST_MAX_HEADERS; i++) {
++        if (ctx->hdr_value[i]) memset(ctx->hdr_value[i], 0, strlen(ctx->hdr_value[i]));
++        free(ctx->hdr_name[i]);
++        free(ctx->hdr_value[i]);
++    }
++    free(ctx->url);
++    if (ctx->checked) {
++        s_request_ctx = NULL;
++        s_request_busy = false;
++    }
++    free(ctx);
++}
++
++// SHA-256 of the first `size` bytes of `part` (what esp_https_ota wrote).
++static bool slot_sha256_matches(const esp_partition_t *part, size_t size, const uint8_t want[32]) {
++    // The legacy mbedtls SHA-256 API (hardware-accelerated; IDF's own core
++    // dump code uses it the same way).
++    mbedtls_sha256_context ctx;
++    mbedtls_sha256_init(&ctx);
++    bool ok = mbedtls_sha256_starts(&ctx, 0) == 0;
++    static uint8_t buf[1024];   // only the one request-mode OTA task uses it
++    for (size_t at = 0; ok && at < size;) {
++        size_t n = size - at > sizeof(buf) ? sizeof(buf) : size - at;
++        ok = esp_partition_read(part, at, buf, n) == ESP_OK &&
++             mbedtls_sha256_update(&ctx, buf, n) == 0;
++        at += n;
++    }
++    uint8_t got[32];
++    ok = ok && mbedtls_sha256_finish(&ctx, got) == 0;
++    mbedtls_sha256_free(&ctx);
++    if (!ok) return false;
++    uint8_t diff = 0;
++    for (int i = 0; i < 32; i++) diff |= got[i] ^ want[i];
++    return diff == 0;
++}
++
+ // Parse a leading "[v]MAJOR.MINOR.PATCH" into three components. Non-numeric
+ // suffixes (e.g. git-describe "-15-gabc-dirty") are ignored.
+ static void parse_ver(const char *s, long out[3]) {
+@@ -176,6 +238,29 @@
+     esp_https_ota_config_t ota_cfg = {
+         .http_config = &http_cfg,
+     };
++    const esp_partition_t *slot = NULL;
++    if (ctx->checked) {
++        // Vesper (task 13): never replace the only known-good slot while the
++        // running image is still on probation.
++        esp_ota_img_states_t state;
++        if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &state) == ESP_OK &&
++            state == ESP_OTA_IMG_PENDING_VERIFY) {
++            ESP_LOGW(TAG, "not installing: the running image is not validated yet");
++            emit(ctx, OTA_RESULT_FAILED, "running image not validated yet", NULL, running);
++            goto done;
++        }
++        slot = esp_ota_get_next_update_partition(NULL);
++        if (!slot || ctx->expected_size > slot->size) {
++            ESP_LOGE(TAG, "no update slot for %u bytes", (unsigned)ctx->expected_size);
++            emit(ctx, OTA_RESULT_FAILED, "image does not fit the update slot", NULL, running);
++            goto done;
++        }
++        // The node's bearer and credential: no redirect may carry them elsewhere.
++        http_cfg.disable_auto_redirect = true;
++        ota_cfg.http_client_init_cb = request_client_init;
++        ota_cfg.partition.staging = slot;
++        s_request_ctx = ctx;
++    }
+ 
+     esp_https_ota_handle_t handle = NULL;
+     esp_err_t err = esp_https_ota_begin(&ota_cfg, &handle);
+@@ -200,6 +285,15 @@
+     memcpy(new_version, new_desc.version, sizeof(new_desc.version));
+     new_version[sizeof(new_desc.version)] = '\0';
+     ESP_LOGI(TAG, "incoming version=%s", new_version);
++
++    if (ctx->checked && strcmp(new_version, ctx->expected_version) != 0) {
++        ESP_LOGE(TAG, "image version %s is not the advertised %s", new_version,
++                 ctx->expected_version);
++        esp_https_ota_abort(handle);
++        emit(ctx, OTA_RESULT_FAILED, "image version differs from the manifest", new_version,
++             running);
++        goto done;
++    }
+ 
+     if (!ctx->force && !version_is_newer(new_version, running)) {
+         ESP_LOGW(TAG, "skipping: %s not newer than %s", new_version, running);
+@@ -228,6 +322,29 @@
+         goto done;
+     }
+ 
++    if (ctx->checked) {
++        // Vesper (task 13): exactly the advertised bytes, checked in flash
++        // before anything can switch the boot partition.
++        int got = esp_https_ota_get_image_len_read(handle);
++        if (got < 0 || (size_t)got != ctx->expected_size) {
++            ESP_LOGE(TAG, "image is %d bytes, the manifest says %u", got,
++                     (unsigned)ctx->expected_size);
++            esp_https_ota_abort(handle);
++            emit(ctx, OTA_RESULT_FAILED, "image size differs from the manifest", new_version,
++                 running);
++            goto done;
++        }
++        if (!slot_sha256_matches(slot, ctx->expected_size, ctx->expected_sha256)) {
++            ESP_LOGE(TAG, "image SHA-256 differs from the manifest; not installing");
++            esp_https_ota_abort(handle);
++            emit(ctx, OTA_RESULT_FAILED, "image SHA-256 differs from the manifest", new_version,
++                 running);
++            goto done;
++        }
++        ESP_LOGI(TAG, "image matches the manifest (%u bytes, SHA-256)",
++                 (unsigned)ctx->expected_size);
++    }
++
+     // finish() validates SHA-256 + signature (when enabled) and sets the boot
+     // partition. Do NOT abort after calling finish.
+     err = esp_https_ota_finish(handle);
+@@ -247,8 +364,7 @@
+     esp_restart();
+ 
+ done:
+-    free(ctx->url);
+-    free(ctx);
++    ctx_free(ctx);
+     stack_monitor_record(NULL);
+     vTaskDelete(NULL);
+ }
+@@ -285,8 +401,72 @@
+     }
+ }
+ 
++static void request_fail(ota_status_cb cb, void *user, const char *detail) {
++    ESP_LOGE(TAG, "could not start OTA: %s", detail);
++    if (cb) {
++        ota_event_t ev = { .result = OTA_RESULT_FAILED, .detail = detail };
++        cb(&ev, user);
++    }
++}
++
++void ota_start_request(const ota_request_t *req, ota_status_cb cb, void *user) {
++    if (!req || !req->url || !*req->url || !req->expected_version ||
++        strlen(req->expected_version) >= sizeof(((ota_ctx_t *)0)->expected_version) ||
++        !req->expected_sha256 || !req->expected_size ||
++        req->nheaders > OTA_REQUEST_MAX_HEADERS || (req->nheaders && !req->headers)) {
++        request_fail(cb, user, "bad request");
++        return;
++    }
++    if (s_request_busy) {
++        request_fail(cb, user, "an update is already running");
++        return;
++    }
++    ota_ctx_t *ctx = calloc(1, sizeof(*ctx));
++    if (!ctx) {
++        request_fail(cb, user, "out of memory");
++        return;
++    }
++    ctx->checked = true;
++    s_request_busy = true;
++    ctx->cb = cb;
++    ctx->user = user;
++    ctx->url = strdup(req->url);
++    bool ok = ctx->url != NULL;
++    for (size_t i = 0; ok && i < req->nheaders; i++) {
++        ctx->hdr_name[i] = strdup(req->headers[i].name ? req->headers[i].name : "");
++        ctx->hdr_value[i] = strdup(req->headers[i].value ? req->headers[i].value : "");
++        ok = ctx->hdr_name[i] && ctx->hdr_value[i];
++    }
++    ctx->nheaders = req->nheaders;
++    strlcpy(ctx->expected_version, req->expected_version, sizeof(ctx->expected_version));
++    memcpy(ctx->expected_sha256, req->expected_sha256, sizeof(ctx->expected_sha256));
++    ctx->expected_size = req->expected_size;
++    if (!ok) {
++        ctx_free(ctx);
++        request_fail(cb, user, "out of memory");
++        return;
++    }
++    if (xTaskCreate(ota_task, "ota", 16384, ctx, 5, NULL) != pdPASS) {
++        ctx_free(ctx);
++        request_fail(cb, user, "could not start ota task");
++    }
++}
++
+ #else
+ 
++void ota_start_request(const ota_request_t *req, ota_status_cb cb, void *user) {
++    (void)req;
++    if (cb) {
++        ota_event_t ev = {
++            .result = OTA_RESULT_SKIPPED,
++            .detail = "OTA disabled in this build",
++            .new_version = NULL,
++            .running_version = esp_app_get_description()->version,
++        };
++        cb(&ev, user);
++    }
++}
++
+ void ota_start(const char *url, bool force, ota_status_cb cb, void *user) {
+     (void)url;
+     (void)force;
+diff --git a/esp32/main/ota.h b/esp32/main/ota.h
+--- a/esp32/main/ota.h
++++ b/esp32/main/ota.h
+@@ -17,6 +17,8 @@
+ #pragma once
+ 
+ #include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
+ 
+ typedef enum {
+     OTA_RESULT_APPLIED,   // written + verified; device will reboot shortly
+@@ -47,3 +49,35 @@
+ // immediately. `cb` may be NULL. When disabled, synchronously reports SKIPPED
+ // without starting a download or task; force cannot override this setting.
+ void ota_start(const char *url, bool force, ota_status_cb cb, void *user);
++
++// Vesper (task 13): an update from the node's own server. ota_start's version
++// gate still applies (never an image whose version is not newer than the
++// running one, no force), and on top of it:
++//   - the request carries `headers` (the node's bearer and credential) and
++//     follows no redirect, so they never leave the configured server;
++//   - the image's descriptor must carry exactly `expected_version`;
++//   - exactly `expected_size` bytes must arrive, and what was written to the
++//     update slot must hash to `expected_sha256` (the server's manifest),
++//     checked by reading the slot back BEFORE esp_https_ota_finish() verifies
++//     the image (its own SHA-256 and signature) and switches the boot partition;
++//   - nothing is installed while the running image is still PENDING_VERIFY
++//     (that would overwrite the only known-good slot).
++// Everything is copied before this returns (the caller may wipe its buffers);
++// the copies of the header values are wiped when the OTA ends.
++typedef struct {
++    const char *name;
++    const char *value;
++} ota_header_t;
++
++#define OTA_REQUEST_MAX_HEADERS 6
++
++typedef struct {
++    const char *url;
++    const ota_header_t *headers;
++    size_t nheaders;                 // at most OTA_REQUEST_MAX_HEADERS
++    const char *expected_version;    // required
++    const uint8_t *expected_sha256;  // required, 32 bytes
++    size_t expected_size;            // required, > 0
++} ota_request_t;
++
++void ota_start_request(const ota_request_t *req, ota_status_cb cb, void *user);
