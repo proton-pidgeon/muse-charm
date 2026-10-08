@@ -111,3 +111,9 @@
 - /implement on ravenz-node merged to vesper-voice main @ 212a79f: node variant in persona.py::system_prompt, channel-aware to_spoken in ask.py, /ask accepts channel (allowlisted ask/node, default ask, invalid→422, no transcript logging). +9 tests; 443 passed, 21 pre-existing Windows-env failures (zero growth, byte-identical baseline); ruff clean. Live brain untouched.
 - Board issue #4 → Done, closed.
 - Task 07 (B1 backend) next: Studio after 05 (task is Studio-homed: launchd + keys + latency measurement). Decisions to inject: TTS = phone brain's ElevenLabs voice (Q1 resolved); transcripts transient-only (Q4 default); HTTP shim, no LiveKit spike (Q6); PTT v1.
+
+## 2026-10-07 ~20:30 CDT — Task 05 verified on-device, one human gate to close
+- Avatar-only build flashed; all 7 modes + happy overlay verified via LVGL framebuffer screenshots (firmware/avatar/device-snaps/, 11 shots). Voice path verified (PTT turn over serial). Commits ce12fd8, 9e63b0c.
+- Spec correction: UI draws the owl at 96px (1.5x) on the 128px panel, not exact 2x — UI untouched, as designed.
+- HUMAN GATE: board came up unpaired/Wi-Fi-wiped after the final flash (cause undetermined; pairing survived the earlier bench flash). Needs Kevin: re-pair in Muse app + one watched PTT turn to fully close task 05. Board issue #3 stays In Progress.
+- Task 07 (B1 backend) dispatched to Studio. Vesper firmware (09+) replaces Meta pairing with the claim flow, so the re-pair is task-05-closure only, not a build blocker.
