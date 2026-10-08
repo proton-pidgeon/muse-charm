@@ -28,9 +28,16 @@ token. The same middleware then does the per-route second factor, still before t
 ``/admin/*`` needs
 ``X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>``.
 
-Transcripts are transient (Kevin's Q4 decision). Transcript and reply text go to the node
-over the SSE stream only. They are never logged or persisted. Logs carry the node id,
-counts, latencies, providers and status codes.
+Transcripts are never logged (Kevin's Q4 decision). Transcript and reply text go to the node
+over the SSE stream, and (task 16, Kevin's request 2026-10-08) into the node's conversation
+memory on the Studio (:mod:`vesper_node.conversation`): the last 15 exchanges plus a session
+summary, prepended to the next ``/ask`` so follow-ups like "tell me more about that" work.
+Logs carry the node id, counts, char lengths, latencies, providers and status codes.
+
+Turn pipeline: STT -> voice room assignment (:mod:`vesper_node.roomcmd`: "you're in the
+office" updates the registry and is confirmed locally, no brain call) -> session check
+(idle > 15 min: compress the old transcript into a summary) -> ``/ask`` with room + history
+-> record the exchange -> TTS.
 """
 
 from __future__ import annotations
@@ -54,8 +61,19 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import logsafe
 from .brain import MAX_TEXT_CHARS, AskError, BrainClient, with_room_context
 from .config import ConfigError, Settings, load_settings
+from .conversation import (
+    HISTORY_BUDGET,
+    SUMMARY_MAX_CHARS,
+    ConversationStore,
+    NodeMemory,
+    build_ask_text,
+    extractive_summary,
+    shorten,
+    summary_request,
+)
 from .firmware import IMAGE_NAME_RE, VERSION_RE, FirmwareError, FirmwareStore
 from .registry import NODE_ID_RE, POLL_INTERVAL_S, ClaimError, NodeAuth, Registry, RegistryError
+from .roomcmd import INVALID_ROOM_REPLY, confirmation, detect_room_assignment
 from .stt import STT, STTError
 from .tts import NodeTTS
 from .wav import MIN_STT_MS, BadAudio, parse_note
@@ -80,6 +98,9 @@ ADMIN_PREFIX = "/admin/"
 ADMIN_HEADER = b"x-vesper-node-admin"
 MAX_ADMIN_BODY_BYTES = 1024
 NODE_AUTH_SCOPE_KEY = "vesper_node.auth"
+# The session-summary /ask runs inside a user's turn: bound it well below the 30 s ask timeout
+# and fall back to the extractive summary.
+SUMMARY_TIMEOUT_S = 8.0
 
 # Fixed, safe captions for SSE `error` events (never derived from user input).
 ERROR_MESSAGES = {
@@ -273,6 +294,8 @@ def create_app(
     sse_ping_s: float = SSE_PING_S,
     registry: Registry | None = None,
     firmware: FirmwareStore | None = None,
+    conversations: ConversationStore | None = None,
+    summary_timeout_s: float = SUMMARY_TIMEOUT_S,
 ) -> BearerAuth:
     """Build the ASGI app (FastAPI wrapped in :class:`BearerAuth`). Transports are for tests."""
     if registry is None:
@@ -281,6 +304,11 @@ def create_app(
         registry = Registry(settings.registry_file)
     if firmware is None and settings.firmware_dir:
         firmware = FirmwareStore(settings.firmware_dir)
+    if conversations is None:
+        conversations = ConversationStore(
+            settings.memory_file, idle_s=settings.session_idle_minutes * 60
+        )
+    memory = conversations
     stt = STT(
         chain=[(p, settings.stt_key(p) or "") for p in settings.stt_chain()],
         language=settings.stt_language,
@@ -307,10 +335,12 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         log.info(
-            "vesper-node up: stt=%s tts=%s max_concurrent=%d",
+            "vesper-node up: stt=%s tts=%s max_concurrent=%d memory=%s idle_s=%d",
             ",".join(stt.providers),
             "on" if tts.enabled else "off",
             max_concurrent,
+            "file" if memory.path else "ram",
+            memory.idle_s,
         )
         yield
         for task in list(tasks):
@@ -327,6 +357,7 @@ def create_app(
     )
     app.state.tts = tts  # tests + ops
     app.state.turn_state = state
+    app.state.conversations = memory
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -336,6 +367,65 @@ def create_app(
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
+
+    async def save_memory(node_id: str, state: NodeMemory) -> None:
+        try:
+            await memory.put(node_id, state)
+        except OSError as e:  # keep the turn: memory stays in RAM until the next write
+            log.error("node memory write failed: node=%s reason=%s", node_id, type(e).__name__)
+
+    async def summarize(node_id: str, old: NodeMemory) -> NodeMemory:
+        """Compress an idle session: brain summary (bounded), else extractive. Lock held."""
+        request = summary_request(old, limit=MAX_TEXT_CHARS)
+        summary, how = None, "extractive"
+        if request is not None:
+            try:
+                got = await asyncio.wait_for(
+                    brain.ask(request, node_id=node_id), timeout=summary_timeout_s
+                )
+                summary, how = shorten(got.text, SUMMARY_MAX_CHARS), "brain"
+            except (AskError, TimeoutError):
+                summary = None
+        if not summary:
+            summary, how = extractive_summary(old), "extractive"
+        log.info(
+            "session compressed: node=%s turns=%d summary=%s chars=%d",
+            node_id,
+            len(old.turns),
+            how,
+            len(summary or ""),
+        )
+        return memory.compressed(old, summary)
+
+    async def session_memory(node_id: str) -> NodeMemory:
+        """This node's memory for the next ask, compressing an idle session first."""
+        current = await memory.get(node_id)
+        if memory.is_idle(current, memory.clock()):
+            current = await summarize(node_id, current)
+            await save_memory(node_id, current)
+        return current
+
+    async def remember(node_id: str, user: str, reply: str) -> None:
+        """Record a completed exchange (re-read under the lock: turns may overlap)."""
+        async with memory.lock(node_id):
+            current = await memory.get(node_id)
+            await save_memory(node_id, memory.append(current, user, reply, memory.clock()))
+
+    async def assign_room(node: NodeAuth, room: str | None) -> bool:
+        """Update the registry room. False only if the registry write failed."""
+        if room is None:
+            log.info("room assignment: node=%s result=invalid_name", node.node_id)
+            return True
+        try:
+            await asyncio.to_thread(registry.set_room, node.node_id, room)
+        except ClaimError as e:
+            log.warning("room assignment failed: node=%s reason=%s", node.node_id, e.code)
+            return False
+        except RegistryError as e:
+            log.error("room assignment failed: node=%s reason=%s", node.node_id, e)
+            return False
+        log.info("room assigned: node=%s from=%s to=%s", node.node_id, node.room, room)
+        return True
 
     async def run_turn(note: Any, node: NodeAuth, upload_s: float, q: asyncio.Queue) -> None:
         node_id = node.node_id
@@ -349,6 +439,7 @@ def create_app(
             "stt_provider": None,
         }
         ok, code = False, None
+        mem_info = "-"  # log-only: history turns sent / "room" / "idle"
 
         def emit(event: str, data: dict[str, Any]) -> None:
             q.put_nowait(sse(event, data))
@@ -357,6 +448,22 @@ def create_app(
             nonlocal code
             code = c
             emit("error", {"code": c, "message": ERROR_MESSAGES[c]})
+
+        async def speak(text: str) -> None:
+            """The reply events: text, then (if TTS is on) the MP3 URL."""
+            emit("message_start", {"id": "m1"})
+            emit("text_delta", {"id": "m1", "text": text})
+            t = clock()
+            minted = await tts.mint(text, node=node_id) if tts.enabled else None
+            timing["tts_ms"] = _ms(clock() - t) if tts.enabled else None
+            emit(
+                "message_done",
+                {
+                    "id": "m1",
+                    "audio_url": f"audio/{minted[0]}.mp3" if minted else None,
+                    "audio_bytes": minted[1] if minted else None,
+                },
+            )
 
         try:
             if note.duration_ms < MIN_STT_MS:
@@ -375,31 +482,39 @@ def create_app(
                 fail("empty_transcript")
                 return
             emit("transcript", {"text": heard.text})  # to the node only; never logged
-            ask_text = with_room_context(heard.text, node.room)  # task 08: registry room
-            if len(ask_text) > MAX_TEXT_CHARS:
+            # task 16 Part 3: "you're in the office" is handled here, without the brain
+            assignment = detect_room_assignment(heard.text)
+            if assignment is not None:
+                mem_info = "room"
+                if not await assign_room(node, assignment.room):
+                    fail("internal")
+                    return
+                await speak(
+                    confirmation(assignment.room) if assignment.room else INVALID_ROOM_REPLY
+                )
+                ok = True
+                return
+            # task 08: registry room. Kevin's own words are never clipped: refuse instead.
+            if len(with_room_context(heard.text, node.room)) > MAX_TEXT_CHARS:
                 fail("transcript_too_long")
                 return
+            # task 16 Parts 1+2: session check + history (lock released during the ask)
+            async with memory.lock(node_id):
+                history = await session_memory(node_id)
+            ask_text = build_ask_text(
+                heard.text, node.room, history, limit=MAX_TEXT_CHARS, budget=HISTORY_BUDGET
+            )
+            mem_info = str(len(history.turns)) + ("+summary" if history.summary else "")
             t = clock()
             try:
                 reply = await brain.ask(ask_text, node_id=node_id)
             except AskError:
                 timing["ask_ms"] = _ms(clock() - t)
-                fail("ask_failed")
+                fail("ask_failed")  # nothing recorded: there was no reply
                 return
             timing["ask_ms"] = _ms(clock() - t)
-            emit("message_start", {"id": "m1"})
-            emit("text_delta", {"id": "m1", "text": reply.text})
-            t = clock()
-            minted = await tts.mint(reply.text, node=node_id) if tts.enabled else None
-            timing["tts_ms"] = _ms(clock() - t) if tts.enabled else None
-            emit(
-                "message_done",
-                {
-                    "id": "m1",
-                    "audio_url": f"audio/{minted[0]}.mp3" if minted else None,
-                    "audio_bytes": minted[1] if minted else None,
-                },
-            )
+            await remember(node_id, heard.text, reply.text)
+            await speak(reply.text)
             ok = True
         except asyncio.CancelledError:
             code = "cancelled"
@@ -414,13 +529,14 @@ def create_app(
             q.put_nowait(None)
             release()
             log.info(
-                "turn done: node=%s room=%s auth=%s ok=%s code=%s audio_ms=%d upload_ms=%s "
-                "stt_ms=%s ask_ms=%s tts_ms=%s total_ms=%s provider=%s",
+                "turn done: node=%s room=%s auth=%s ok=%s code=%s memory=%s audio_ms=%d "
+                "upload_ms=%s stt_ms=%s ask_ms=%s tts_ms=%s total_ms=%s provider=%s",
                 node_id,
                 node.room,
                 node.via,
                 ok,
                 code or "-",
+                mem_info,
                 note.duration_ms,
                 timing["upload_ms"],
                 timing["stt_ms"],
@@ -697,6 +813,8 @@ def check_config() -> int:
         print(f"config error: firmware store: {e}", file=sys.stderr)
         return EX_CONFIG
     print(f"  published: {published.version if published else 'none'}")
+    print(f"node memory: {s.memory_file} (VESPER_NODE_MEMORY_FILE)")
+    print(f"  session idle: {s.session_idle_minutes} min (VESPER_NODE_SESSION_IDLE_MINUTES)")
     print(
         "admin claim route: "
         + ("on (VESPER_NODE_ADMIN_TOKEN)" if s.admin_token else "off (CLI approval only)")
