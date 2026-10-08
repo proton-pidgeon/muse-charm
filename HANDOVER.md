@@ -253,3 +253,20 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Issue #6 -> Done ("🟢 Registry + claim flow merged, review-gated (B2)"). Board #11 now: Done = A1, A2, B3, B1, B2, F1, F2; In Progress = F3; Todo = F4, B4(HELD).
 - Task 11 (F3 claim flow on device) dispatched to Studio: claude -p "/implement tasks/11-firmware-claim-flow.md" (background). Single valid host remains mac-daddy31337.
 - Remaining: 11 -> 13 -> 12(HELD for Kevin's deploy approval).
+
+## 2026-10-08 ~11:46 CDT — TTS listen check PASSED; task 12 (Peggy) APPROVED; task 11 progressing
+- Kevin's human listen check: PASSED — push-to-talk works, spoken reply sounds like Vesper.
+- Kevin APPROVED the Peggy deploy (task 12/B4) — unlocks after task 11 finishes. Board #11 issue #10 summary updated (Todo, approved).
+- Task 11 (F3) 60-min investigation (PID 72717, 75 min elapsed): PROGRESSING, not stuck. 6 commits on impl/11-firmware-claim-flow incl. review-fix cycle ("close the store/forget race (delta review, HIGH)" committed 11:43); files touched in last 10 min (firmware/hatch/*, backend pytest cache). In adversarial review remediation — long runtime is legitimate.
+- Dispatch order now: 11 -> 12 (APPROVED: build Caddy handle + fly deploy) -> 13.
+
+## 2026-10-08 ~11:55 CDT — Task 11 (F3 claim flow) GREEN + merged; task 12 dispatched (APPROVED)
+- Task 11 merged to main (6b69358 + b4cedff): claim flow firmware, review-gated (delta review closed a HIGH: store/forget race).
+- HUMAN GATE (documented): on-device claim — Kevin reads the claim code off the board's 128x128 screen and runs `vesper-node claim <code> --room <room>` on the Studio, then reboots the board and does a PTT turn. Bench board already has Wi-Fi/server URL/Bearer <redacted>, boots unclaimed showing a code.
+- Issue #9 -> Done. Board #11: Done = A1, A2, B3, B1, B2, F1, F2, F3; In Progress = B4; Todo = F4.
+- Task 12 (B4 Peggy /vesper-node/*) dispatched to Studio with Kevin's explicit deploy approval: claude -p "/implement tasks/12-peggy-node-handle.md" (PID 56157, 11:54). DoD includes live 401 checks + turn via peggy.fly.dev/vesper-node.
+- Remaining: 12 -> 13 (F4 OTA).
+
+## 2026-10-08 ~11:56 CDT — Build vigilance rule tightened to 30 minutes (Kevin)
+- Standing rule change: check every dispatched build at least every 30 min (was 60). Applies from here on.
+- Watcher armed on task-12 implement (PID 56157, started 11:54): fires at ~30 min elapsed if still running.
