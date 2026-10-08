@@ -42,3 +42,20 @@ Build as brain tools in the vesper-voice repo, available to the `node` channel:
 - Timers, reminders, lists, weather work by voice (live PTT test each).
 - Tests green, adversarial review per the skill gates.
 - No irreversible tool was added without a confirmation design.
+
+## Progress — lane 18B (muse-charm: node backend + firmware), 2026-10-08
+Contract: `/tmp/t18-contract.md` (orchestrator). Lane 18A (vesper-voice: persona unlock, tools,
+`POST /node/announcements/claim`) is separate.
+- [x] Backend `GET /announcements` (same three auth layers as `/turn`; brain claim, 5 s, no
+  retries/redirects; strict validation; reply TTS per item; brain failure → `200 []`; 5 s per-node
+  rate limit → 429; not a conversation turn; text never logged). `backend make verify` green.
+- [x] Wire doc: endpoint row, `GET /announcements` section, changelog. Peggy's
+  `/vesper-node/*` handle is a wildcard + `strip_prefix`: no Peggy change.
+- [x] Firmware 1.0.2: idle 15 s poll, `vesper_announce.c` parser/scheduler (host tests in
+  `make test`), playback through the reply-MP3 path, PTT wins, SDK patch 0006. ESP-IDF build of a
+  fresh `b1a3822` tree: exit 0, 0 warnings, 2,035,712 B.
+- [ ] HUMAN GATE: publish 1.0.2 (`vesper-node firmware publish`) → node OTAs → set a timer and a
+  reminder by voice → hear them announced on the node; press PTT during one (it stops at once).
+- [ ] HUMAN GATE: live PTT tests of web/news/calendar/camera, timers, reminders, lists, weather
+  (depend on 18A being merged and the brain restarted).
+- No irreversible tool was added by 18B (it only reads/plays what the brain hands out).
