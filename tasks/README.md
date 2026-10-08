@@ -17,7 +17,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 09 | [F1 — SDK fork + third `muse_hatch_*` backend](09-firmware-hatch-backend.md) | done (host-verified: build + live host turn); on-device PTT turn blocked on Kevin (flash + serial provision) | 07 |
 | 10 | [F2 — TTS playback slot](10-firmware-tts-playback.md) | done (host + on-device serial evidence: MP3 fetched, decoded 22.05→16 kHz, played, captions synced); "heard from speaker" blocked on Kevin listening | 09 |
 | 11 | [F3 — Claim flow firmware](11-firmware-claim-flow.md) | done (host-verified: unit tests, fresh ESP-IDF build, live host claim ceremony; NVS stays plaintext, decision recorded); on-device fresh-flash → claim → reboot → turn blocked on Kevin (HUMAN GATE steps in task file) | 08, 09 |
-| 12 | [B4 — Peggy `/vesper-node/*` handle](12-peggy-node-handle.md) | not started (human-gated: Kevin approves deploy) | 07, 08 |
+| 12 | [B4 — Peggy `/vesper-node/*` handle](12-peggy-node-handle.md) | done (deployed 2026-10-08, edge DoD verified live; board `hatch.host` re-provision blocked on Kevin) | 07, 08 |
 | 13 | [F4 — OTA + fleet hygiene](13-ota-fleet-hygiene.md) | not started | 09, 12 |
 
 Parallel lanes: 04→05 (avatar) is independent of the backend chain 06→07→08.

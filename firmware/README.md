@@ -438,17 +438,16 @@ tests above do that.
 
 The physical board is not flashed by the agents. Steps for Kevin:
 
-1. **Get the backend reachable from the board.** Before task 12 (Peggy `/vesper-node/*`), the
-   board can reach the Studio only over the LAN. The backend binds `::`, which is IPv6-only on
-   the Studio, so either give the board an IPv6 route or add a temporary IPv4 forward on the
-   Studio, for example:
+1. **Get the backend reachable from the board.** Task 12's Peggy handle is live (2026-10-08), so
+   the host is `https://peggy.fly.dev/vesper-node` from any network. For a LAN-only test instead:
+   the backend binds `::`, which is IPv6-only on the Studio, so either give the board an IPv6
+   route or add a temporary IPv4 forward on the Studio, for example:
 
    ```sh
    socat TCP4-LISTEN:8797,fork,reuseaddr TCP6:[::1]:8796
    ```
 
-   Then use `http://<studio-LAN-IPv4>:8797` as the host. After task 12 the host is
-   `https://peggy.fly.dev/vesper-node`.
+   Then use `http://<studio-LAN-IPv4>:8797` as the host.
 2. **Build, flash and provision:**
 
    ```sh
@@ -533,8 +532,8 @@ The agents don't flash the board or open its serial port. Steps for Kevin (or Ve
    curl -s http://[::1]:8796/healthz       # {"ok": true}
    ```
 
-   The board must reach it, as in task 09: the socat forward on `:8797`, host
-   `http://<studio-LAN-IPv4>:8797`, until task 12's Peggy handle exists.
+   The board reaches it at `hatch.host=https://peggy.fly.dev/vesper-node` (task 12, live), or
+   over the LAN via the socat forward on `:8797` as in task 09.
 2. **Build and flash** (the agent's tree `~/builds/muse-charm/scratch/sdk-impl-11` is already
    patched; or apply the patch set to a fresh `b1a3822` worktree):
 
