@@ -787,6 +787,32 @@ bool vp_json_bool(const char *json, size_t len, const char *key, bool *found)
     return false;
 }
 
+bool vp_json_uint(const char *json, size_t len, const char *key, uint32_t *out)
+{
+    jcur_t c = { json, json + len };
+    *out = 0;
+    if (jfind(&c, key) != VP_JSON_OTHER) {
+        return false;
+    }
+    uint64_t v = 0;
+    const char *start = c.p;
+    while (c.p < c.end && *c.p >= '0' && *c.p <= '9') {
+        v = v * 10 + (uint64_t)(*c.p - '0');
+        if (v > UINT32_MAX) {
+            return false;
+        }
+        c.p++;
+    }
+    if (c.p == start || (c.p - start > 1 && *start == '0')) {
+        return false;   /* no digits, or a leading zero (not JSON) */
+    }
+    if (c.p < c.end && (is_alnum(*c.p) || *c.p == '.' || *c.p == '-' || *c.p == '+')) {
+        return false;   /* a fraction, an exponent or junk */
+    }
+    *out = (uint32_t)v;
+    return true;
+}
+
 /* ---- SSE framing ---- */
 
 static bool s_line_started(const vp_sse_t *s)
