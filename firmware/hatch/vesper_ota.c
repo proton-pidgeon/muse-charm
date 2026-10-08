@@ -131,6 +131,11 @@ bool vo_image_url(const vp_url_t *base, const vo_manifest_t *m, char *out, size_
     return vp_url_join(base, suffix, out, cap);
 }
 
+bool vo_server_ok(const vp_url_t *base)
+{
+    return base && base->https;
+}
+
 bool vo_manifest_url(const vp_url_t *base, char *out, size_t cap)
 {
     return vp_url_join(base, "/firmware/manifest", out, cap);

@@ -1458,6 +1458,16 @@ static void ota_step(void)
         !muse_hatch_configured() || !muse_wifi_connected()) {
         return;   /* not yet: the check stays due until the node is claimed and online */
     }
+    static char host[MUSE_HOST_MAX + 1];
+    muse_settings_hatch_host(host);
+    if (!vp_url_parse(host, &s_turn.base) || !vo_server_ok(&s_turn.base)) {
+        if (strcmp(s_ota_status, "needs_https") != 0) {
+            ESP_LOGW(TAG, "update check: skipped: updates come only from an https server URL (hatch.host)");
+        }
+        s_ota_status = "needs_https";
+        vo_sched_done(&s_ota, false, s_node_id, now);   /* look again later: the URL may change */
+        return;
+    }
     static char body[VO_BODY_MAX];
     size_t len;
     int64_t t0 = now_us();

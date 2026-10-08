@@ -84,6 +84,15 @@ bool vo_sha_parse(const char *hex, uint8_t out[VO_SHA_LEN]);
 /* Parses a 200 manifest body. False (and *out zeroed) unless the version, sha256 and size are all well formed. */
 bool vo_manifest_parse(const char *body, size_t len, vo_manifest_t *out);
 
+/*
+ * Updates come only from an https:// server (the CA bundle checks it). The
+ * images are signed, but with the SDK's shared development key
+ * (dev_signing_key.pem, public), so over plain http anyone on the path could
+ * swap the manifest and the image together. Turns may still use a LAN
+ * http:// URL; a node on one simply doesn't check for updates.
+ */
+bool vo_server_ok(const vp_url_t *base);
+
 /* <base>/firmware/<sha256>.bin: always on the configured server, never a URL from the body. */
 bool vo_image_url(const vp_url_t *base, const vo_manifest_t *m, char *out, size_t cap);
 /* <base>/firmware/manifest */

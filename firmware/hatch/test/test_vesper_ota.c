@@ -133,6 +133,10 @@ static void test_urls(void)
     CHECK_STR(url, "https://peggy.fly.dev/vesper-node/firmware/manifest");
     CHECK(vo_image_url(&base, &m, url, sizeof(url)));
     CHECK_STR(url, "https://peggy.fly.dev/vesper-node/firmware/" SHA ".bin");
+    CHECK(vo_server_ok(&base));
+    CHECK(vp_url_parse("http://192.168.5.16:8797", &base));
+    CHECK(!vo_server_ok(&base));   /* updates only over https */
+    CHECK(!vo_server_ok(NULL));
     CHECK(vp_url_parse("http://[::1]:8796", &base));
     CHECK(vo_image_url(&base, &m, url, sizeof(url)));
     CHECK_STR(url, "http://[::1]:8796/firmware/" SHA ".bin");

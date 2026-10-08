@@ -71,21 +71,6 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
   * (see set_face), and "chat=" sends a typed message to Hatch (see chat_line
   * and tools/muse/chat.py).
   */
-diff --git a/esp32/devices/sdkconfig.muse b/esp32/devices/sdkconfig.muse
---- a/esp32/devices/sdkconfig.muse
-+++ b/esp32/devices/sdkconfig.muse
-@@ -29,6 +29,11 @@
- CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
- # These boards ship Link with OTA on.
- CONFIG_HOMEHUB_OTA_ENABLED=y
-+# Vesper (task 13): updates come from the node's own server (hatch.host),
-+# which may be a LAN http:// URL like the turns. The image is still checked
-+# against the server's SHA-256 and verified (SHA-256 + RSA signature) by
-+# esp_https_ota before it can boot.
-+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
- # The display, audio and BLE leave little internal RAM, and Link still needs
- # internal task stacks once Wi-Fi is up. Send small allocations to PSRAM too.
- CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 diff --git a/esp32/main/app.c b/esp32/main/app.c
 --- a/esp32/main/app.c
 +++ b/esp32/main/app.c
