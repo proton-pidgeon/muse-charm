@@ -14,7 +14,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 06 | [B3 — `channel="node"` variant in vesper-voice](06-node-channel-variant.md) | done (vesper-voice 212a79f) | – |
 | 07 | [B1 — Node backend service](07-node-backend-service.md) | done | 06 |
 | 08 | [B2 — Node registry + credentials](08-node-registry.md) | not started | 07 |
-| 09 | [F1 — SDK fork + third `muse_hatch_*` backend](09-firmware-hatch-backend.md) | not started | 07 |
+| 09 | [F1 — SDK fork + third `muse_hatch_*` backend](09-firmware-hatch-backend.md) | done (host-verified: build + live host turn); on-device PTT turn blocked on Kevin (flash + serial provision) | 07 |
 | 10 | [F2 — TTS playback slot](10-firmware-tts-playback.md) | not started | 09 |
 | 11 | [F3 — Claim flow firmware](11-firmware-claim-flow.md) | not started | 08, 09 |
 | 12 | [B4 — Peggy `/vesper-node/*` handle](12-peggy-node-handle.md) | not started (human-gated: Kevin approves deploy) | 07, 08 |
