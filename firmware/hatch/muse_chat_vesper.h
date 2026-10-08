@@ -9,12 +9,15 @@
  * Configuration (NVS namespace "muse", see muse_settings.c):
  *   host        server base URL, e.g. https://peggy.fly.dev/vesper-node
  *               (the turn goes to <host>/turn); serial: >hatch.host=<url>
- *   node_token  the node bearer credential; serial: >hatch.token=<token>
- * Both fall back to CONFIG_VESPER_NODE_URL / CONFIG_VESPER_NODE_TOKEN, which
+ *   node_token  the shared node bearer; serial: >hatch.token=<token>
+ *   node_cred   the per-node credential from the claim flow (task 11,
+ *               vesper_cred.h); never typed in, never logged
+ * host and node_token fall back to CONFIG_VESPER_NODE_URL / CONFIG_VESPER_NODE_TOKEN, which
  * are empty in the repo. The device id is identity_node_id() (homelink-<mac>).
  */
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -32,6 +35,19 @@ void muse_hatch_set_node_id(const char *node_id);
  * or if the fetch or decode fails, the caption is paced over silence as in
  * stock firmware. See muse_chat_vesper.c and vesper_audio.h.
  */
+
+/*
+ * Claim flow (task 11): see muse_chat_vesper.c and vesper_claim.h.
+ *
+ * vesper_node_forget_credential() forgets the stored credential and claims
+ * again (serial >claim.forget). The setup reset uses the _now form, which
+ * erases it synchronously (it restarts right after); call it from a task with
+ * an internal-RAM stack.
+ */
+void vesper_node_forget_credential(void);
+bool vesper_node_forget_credential_now(void);
+/* {"node_id":...,"credential":true|false,"claim":"claimed|starting|pending"}: presence only, for >status. */
+int vesper_node_status_json(char *out, size_t cap);
 
 #ifdef __cplusplus
 }

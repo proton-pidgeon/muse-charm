@@ -33,6 +33,17 @@
  *      plays what came and paces the rest of the caption over silence. The
  *      turn ends (DONE) once every message has been said or shown.
  *
+ * Claim flow (task 11): a node without a credential (fresh flash, setup
+ * reset, or a 403 node_unauthorized on /turn) runs POST /claim/start and
+ * /claim/poll on this task between turns (vesper_claim.c is the state
+ * machine), shows the claim code on the screen (the idle caption and the
+ * settings' server status) and over BLE (vesper_ble.c), keeps the claim
+ * secret in RAM only, and stores the credential it is given in NVS
+ * (vesper_cred.c). Every /turn and /audio request then carries it as
+ * X-Node-Credential. Turns are not ready (muse_hatch_ready) until the node is
+ * claimed, so a press records a note to send once it is. Neither the
+ * credential, the claim secret, the bearer nor the claim code is logged.
+ *
  * Everything network-side runs on one task. The voice task talks to it through
  * a command queue, a stream buffer of mic audio, an event queue (captions) and
  * a stream buffer of reply audio, exactly as with the stock backend. A
@@ -62,8 +73,12 @@
 #include "minimp3.h"
 #include "muse_chat_priv.h"
 #include "muse_settings.h"
+#include "muse_state.h"
 #include "muse_wifi.h"
 #include "vesper_audio.h"
+#include "vesper_ble.h"
+#include "vesper_claim.h"
+#include "vesper_cred.h"
 #include "vesper_proto.h"
 
 static const char *TAG = "vesper_chat";
@@ -99,7 +114,7 @@ static const char *TAG = "vesper_chat";
 
 /* ---- Voice task <-> hatch task ---- */
 
-typedef enum { CMD_CONNECT, CMD_FORGET, CMD_BEGIN, CMD_END, CMD_CANCEL, CMD_WAKE } cmd_type_t;
+typedef enum { CMD_CONNECT, CMD_FORGET, CMD_BEGIN, CMD_END, CMD_CANCEL, CMD_WAKE, CMD_UNCLAIM } cmd_type_t;
 
 typedef struct {
     cmd_type_t type;
@@ -117,6 +132,12 @@ static StreamBufferHandle_t s_in, s_out;
 static atomic_uint s_gen;
 static atomic_bool s_resting;
 static char s_node_id[VP_NODE_ID_MAX + 1];
+
+/* The claim flow (task 11), on this task. s_claimed mirrors s_claim.state for other tasks. */
+static vc_claim_t s_claim;
+static atomic_bool s_claimed;
+static int64_t s_claim_shown_us;     /* when the claim caption was last put up */
+static char s_claim_caption[48];
 
 /* ---- The current turn ---- */
 
@@ -139,7 +160,8 @@ typedef struct {
     vp_url_t base;
     char url[VP_URL_MAX];
     char auth[VP_AUTH_MAX];
-    vp_header_t hdrs[VP_TURN_HEADERS];
+    vp_header_t hdrs[VP_TURN_HEADERS + 1];   /* + X-Node-Credential */
+    char cred[VC_CRED_MAX + 1];
     bool end_requested;
     bool upload_broken;      /* a write failed: the server may have answered early */
     int attempt;
@@ -263,7 +285,7 @@ static bool http_open(int content_length)
     if (!s_turn.http) {
         return false;
     }
-    for (int i = 0; i < VP_TURN_HEADERS; i++) {
+    for (int i = 0; i < VP_TURN_HEADERS + 1; i++) {
         esp_http_client_set_header(s_turn.http, s_turn.hdrs[i].name, s_turn.hdrs[i].value);
     }
     esp_err_t err = esp_http_client_open(s_turn.http, content_length);
@@ -326,6 +348,7 @@ static void turn_finish(void)
     s_turn.tts_msg = -1;
     s_turn.silent = false;
     memset(s_turn.auth, 0, sizeof(s_turn.auth));
+    memset(s_turn.cred, 0, sizeof(s_turn.cred));
 }
 
 static void turn_fail(const char *why)
@@ -471,7 +494,8 @@ static const vp_turn_cbs_t CBS = {
 
 /* ---- Turn: upload ---- */
 
-static bool load_config(void)
+/* The server, the bearer and (need_cred: for /turn and /audio) the node credential. */
+static bool load_config(bool need_cred)
 {
     static char host[MUSE_HOST_MAX + 1];
     static char token[MUSE_TOKEN_MAX + 1];
@@ -480,6 +504,9 @@ static bool load_config(void)
     bool ok = vp_url_parse(host, &s_turn.base) && vp_url_join(&s_turn.base, "/turn", s_turn.url, sizeof(s_turn.url)) &&
               vp_turn_headers(token, s_node_id, s_turn.auth, s_turn.hdrs);
     memset(token, 0, sizeof(token));
+    if (ok && need_cred) {
+        ok = vesper_cred_get(s_turn.cred) && vc_credential_header(s_turn.cred, &s_turn.hdrs[VP_TURN_HEADERS]);
+    }
     return ok;
 }
 
@@ -505,8 +532,12 @@ static void turn_begin(uint32_t gen)
     s_turn.gen = gen;
     s_turn.start_us = now_us();
 
-    if (!muse_hatch_configured() || !load_config()) {
+    if (!muse_hatch_configured()) {
         turn_fail("SET UP VESPER FIRST");
+        return;
+    }
+    if (!load_config(true)) {
+        turn_fail(atomic_load(&s_claimed) ? "SET UP VESPER FIRST" : "CLAIM THIS NODE FIRST");
         return;
     }
     if (!muse_wifi_connected()) {
@@ -571,6 +602,13 @@ static void await_status(void)
         vp_http_verdict_t v = vp_http_verdict(status, s_turn.content_type, code, s_turn.retry_after, s_turn.attempt,
                                               &retry_ms, caption, sizeof(caption));
         ESP_LOGI(TAG, "turn: HTTP %d%s%s", status, code[0] ? " " : "", code);
+        if (vc_needs_claim(status, code)) {
+            /* No refresh token in this credential model (task 08): claim again. The stored
+             * credential stays in NVS until a new one replaces it. */
+            ESP_LOGW(TAG, "the node credential was refused; claiming again");
+            vc_reclaim(&s_claim, now_us() / 1000);
+            atomic_store(&s_claimed, false);
+        }
         if (v == VP_HTTP_STREAM) {
             report_result(MUSE_HATCH_REACHABLE, "Connected");
             emit(MUSE_HATCH_EV_SENT, NULL);
@@ -599,7 +637,7 @@ static void await_status(void)
         }
         s_turn.attempt++;
         s_turn.upload_broken = false;
-        if (!load_config() || !http_open((int)s_turn.note_len) || !write_all(s_turn.note, s_turn.note_len)) {
+        if (!load_config(true) || !http_open((int)s_turn.note_len) || !write_all(s_turn.note, s_turn.note_len)) {
             report_result(MUSE_HATCH_UNREACHABLE, "Can't connect");
             turn_fail("CAN'T REACH VESPER");
             return;
@@ -732,6 +770,8 @@ static bool tts_open(int i)
     }
     esp_http_client_set_header(s_tts.http, s_turn.hdrs[0].name, s_turn.hdrs[0].value);   /* Authorization */
     esp_http_client_set_header(s_tts.http, s_turn.hdrs[1].name, s_turn.hdrs[1].value);   /* X-Node-Id */
+    esp_http_client_set_header(s_tts.http, s_turn.hdrs[VP_TURN_HEADERS].name,
+                               s_turn.hdrs[VP_TURN_HEADERS].value);                     /* X-Node-Credential */
     esp_http_client_set_header(s_tts.http, "Accept", "audio/mpeg");
     esp_err_t err = esp_http_client_open(s_tts.http, 0);
     int64_t cl = err == ESP_OK ? esp_http_client_fetch_headers(s_tts.http) : -1;
@@ -1040,7 +1080,7 @@ static void probe(void)
         return;
     }
     char url[VP_URL_MAX];
-    if (!load_config() || !vp_url_join(&s_turn.base, "/healthz", url, sizeof(url))) {
+    if (!load_config(false) || !vp_url_join(&s_turn.base, "/healthz", url, sizeof(url))) {
         report_result(MUSE_HATCH_UNREACHABLE, "Bad server URL");
         return;
     }
@@ -1076,6 +1116,180 @@ static void probe(void)
     ESP_LOGI(TAG, "server check: HTTP %d", status);
 }
 
+/* ---- Claim flow (task 11) ---- */
+
+typedef struct {
+    char retry_after[16];
+} claim_resp_t;
+
+static esp_err_t on_claim_http_event(esp_http_client_event_t *e)
+{
+    claim_resp_t *r = e->user_data;
+    if (e->event_id == HTTP_EVENT_ON_HEADER && r && e->header_key && e->header_value &&
+        !strcasecmp(e->header_key, "Retry-After")) {
+        strlcpy(r->retry_after, e->header_value, sizeof(r->retry_after));
+    }
+    return ESP_OK;
+}
+
+/*
+ * POST <base><path> with the claim headers (secret NULL for /claim/start) and
+ * no body. The JSON reply goes into body (VC_BODY_MAX, NUL-terminated).
+ * Returns the HTTP status, 0 for no response, -1 if the configuration is
+ * unusable (bad URL, token or node id).
+ */
+static int claim_post(const char *path, const char *secret, char *body, size_t *len, claim_resp_t *resp)
+{
+    static char host[MUSE_HOST_MAX + 1];
+    static char token[MUSE_TOKEN_MAX + 1];
+    char url[VP_URL_MAX];
+    vp_header_t h[VC_CLAIM_HEADERS];
+    muse_settings_hatch_host(host);
+    muse_settings_hatch_token(token);
+    int nh = vp_url_parse(host, &s_turn.base) && vp_url_join(&s_turn.base, path, url, sizeof(url))
+                 ? vc_claim_headers(token, s_node_id, secret, s_turn.auth, h)
+                 : 0;
+    memset(token, 0, sizeof(token));
+    *len = 0;
+    body[0] = '\0';
+    memset(resp, 0, sizeof(*resp));
+    if (!nh) {
+        return -1;
+    }
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = CONNECT_TIMEOUT_MS,
+        .event_handler = on_claim_http_event,
+        .user_data = resp,
+        .buffer_size = 1024,
+        .buffer_size_tx = VP_AUTH_MAX + 512,   /* the request line and headers, bearer and secret included */
+        .disable_auto_redirect = true,         /* never carry the bearer elsewhere */
+        .crt_bundle_attach = s_turn.base.https ? esp_crt_bundle_attach : NULL,
+    };
+    esp_http_client_handle_t c = esp_http_client_init(&cfg);
+    int status = 0;
+    if (c) {
+        for (int i = 0; i < nh; i++) {
+            esp_http_client_set_header(c, h[i].name, h[i].value);
+        }
+        if (esp_http_client_open(c, 0) == ESP_OK && esp_http_client_fetch_headers(c) >= 0) {
+            status = esp_http_client_get_status_code(c);
+            while (*len < VC_BODY_MAX - 1) {
+                int n = esp_http_client_read(c, body + *len, (int)(VC_BODY_MAX - 1 - *len));
+                if (n <= 0) {
+                    break;
+                }
+                *len += (size_t)n;
+            }
+            body[*len] = '\0';
+        }
+        esp_http_client_close(c);
+        esp_http_client_cleanup(c);   /* frees its copies of the headers */
+    }
+    memset(s_turn.auth, 0, sizeof(s_turn.auth));
+    return status;
+}
+
+/*
+ * Puts the claim state where it can be seen: the idle caption (re-shown every
+ * few seconds, as other screens take the caption over), the server status in
+ * Muse's settings, and the BLE claim characteristic. Never the serial log.
+ */
+static void claim_show(bool force)
+{
+    char cap[sizeof(s_claim_caption)];
+    vc_caption(&s_claim, cap, sizeof(cap));
+    bool changed = strcmp(cap, s_claim_caption) != 0;
+    int64_t now = now_us();
+    if (cap[0] && (changed || force || now - s_claim_shown_us > 5 * 1000000LL)) {
+        if (muse_state_mode(NULL) == MUSE_MODE_IDLE) {
+            muse_state_set_caption("%s", cap);
+        }
+        report_result(MUSE_HATCH_UNTESTED, cap);
+        s_claim_shown_us = now;
+    }
+    if (changed || force) {
+        strlcpy(s_claim_caption, cap, sizeof(s_claim_caption));
+        bool claiming = s_claim.state != VC_CLAIMED;
+        vesper_ble_set_claim(vc_state_name(&s_claim), s_claim.state == VC_POLL ? s_claim.code : NULL,
+                             claiming ? NULL : s_claim.room, claiming);
+    }
+}
+
+/* One claim request, if one is due and the node can reach its server. Only between turns. */
+static void claim_step(void)
+{
+    if (s_turn.phase != P_IDLE || s_claim.state == VC_CLAIMED) {
+        return;
+    }
+    if (!muse_hatch_configured() || !muse_wifi_connected()) {
+        return;   /* the screen says what's missing (server URL + token, or Wi-Fi) */
+    }
+    vc_action_t a = vc_due(&s_claim, now_us() / 1000);
+    if (a == VC_ACT_NONE) {
+        claim_show(false);
+        return;
+    }
+    static char body[VC_BODY_MAX];
+    size_t len;
+    claim_resp_t resp;
+    int64_t t0 = now_us();
+    int status = claim_post(a == VC_ACT_START ? "/claim/start" : "/claim/poll",
+                            a == VC_ACT_POLL ? s_claim.secret : NULL, body, &len, &resp);
+    int64_t now = now_us() / 1000;
+    vc_event_t ev = a == VC_ACT_START ? vc_start_result(&s_claim, status, body, len, resp.retry_after, now)
+                                      : vc_poll_result(&s_claim, status, body, len, resp.retry_after, now);
+    memset(body, 0, sizeof(body));   /* a 200 held the secret or the credential */
+    int ms = (int)((now_us() - t0) / 1000);
+    switch (ev) {
+    case VC_EV_CODE:
+        ESP_LOGI(TAG, "claim: code %u ready (HTTP 200 in %d ms); shown on the screen and over BLE",
+                 (unsigned)s_claim.codes, ms);
+        break;
+    case VC_EV_PENDING:
+        if (s_claim.polls == 1 || s_claim.polls % 20 == 0) {
+            ESP_LOGI(TAG, "claim: waiting for approval (poll %u)", (unsigned)s_claim.polls);
+        }
+        break;
+    case VC_EV_CLAIMED: {
+        char cred[VC_CRED_MAX + 1];
+        vc_take_credential(&s_claim, cred);
+        bool saved = vesper_cred_store(cred);
+        memset(cred, 0, sizeof(cred));
+        atomic_store(&s_claimed, true);
+        ESP_LOGI(TAG, "claim: claimed%s%s; credential %s", s_claim.room[0] ? ", room " : "", s_claim.room,
+                 saved ? "saved in NVS" : "NOT saved (kept until reboot)");
+        report_result(MUSE_HATCH_REACHABLE, "Claimed");
+        if (muse_state_mode(NULL) == MUSE_MODE_IDLE) {
+            muse_state_set_caption("CLAIMED%s%s", s_claim.room[0] ? " - " : "", s_claim.room);
+        }
+        break;
+    }
+    case VC_EV_RESTART:
+        ESP_LOGI(TAG, "claim: HTTP %d: the code expired or was replaced; getting a new one", status);
+        break;
+    case VC_EV_PROBLEM:
+        ESP_LOGW(TAG, "claim: %s: %s (HTTP %d); next try in %d s", a == VC_ACT_START ? "start" : "poll",
+                 status < 0 ? "server URL or token unusable" : status ? "refused" : "no response", status,
+                 (int)(vc_wait_ms(&s_claim, now) / 1000));
+        break;
+    case VC_EV_NONE:
+        break;
+    }
+    claim_show(ev != VC_EV_PENDING && ev != VC_EV_NONE);
+}
+
+/* Serial ">claim.forget": forget the credential and claim again. */
+static void unclaim(void)
+{
+    vesper_cred_forget();
+    vc_reclaim(&s_claim, now_us() / 1000);
+    atomic_store(&s_claimed, false);
+    ESP_LOGI(TAG, "claim: credential forgotten; claiming again");
+    claim_show(true);
+}
+
 /* ---- Task ---- */
 
 static void handle(const cmd_t *cmd)
@@ -1090,6 +1304,13 @@ static void handle(const cmd_t *cmd)
         if (s_turn.phase != P_IDLE) {
             turn_fail("SETTINGS CHANGED");
         }
+        vc_config_changed(&s_claim, now_us() / 1000);   /* a claim in progress starts over on the new server */
+        break;
+    case CMD_UNCLAIM:
+        if (s_turn.phase != P_IDLE) {
+            turn_fail("SETTINGS CHANGED");
+        }
+        unclaim();
         break;
     case CMD_BEGIN:
         if (cmd->gen == atomic_load(&s_gen)) {
@@ -1117,7 +1338,13 @@ static void hatch_task(void *arg)
     (void)arg;
     for (;;) {
         cmd_t cmd;
+        /* Idle: every 500 ms, sooner when a claim request is due. Resting (asleep on battery):
+         * not at all, so a claim pauses until the screen wakes; a code nobody can see is no use. */
         int wait_ms = s_turn.phase == P_LISTEN ? 5 : s_turn.phase != P_IDLE ? 2 : atomic_load(&s_resting) ? -1 : 500;
+        int64_t claim_ms = vc_wait_ms(&s_claim, now_us() / 1000);
+        if (wait_ms > 0 && s_turn.phase == P_IDLE && claim_ms >= 0 && claim_ms < wait_ms) {
+            wait_ms = claim_ms < 10 ? 10 : (int)claim_ms;
+        }
         TickType_t wait = wait_ms < 0 ? portMAX_DELAY : pdMS_TO_TICKS(wait_ms);
         if (xQueueReceive(s_cmds, &cmd, wait) == pdTRUE) {
             handle(&cmd);
@@ -1137,6 +1364,9 @@ static void hatch_task(void *arg)
         }
         if (s_turn.phase != P_IDLE && s_turn.phase != P_LISTEN) {
             check_turn();
+        }
+        if (!atomic_load(&s_resting)) {
+            claim_step();
         }
     }
 }
@@ -1190,6 +1420,12 @@ void muse_hatch_start(void)
         s_tts_pcm = s_tts_out = NULL;
     }
     va_mp3_init(&s_tts.mp3, s_tts_buf, TTS_BUF);
+    /* The claim flow: claimed if NVS holds a credential, else claim once the server is reachable. */
+    vesper_cred_load();   /* the boot task: an internal-RAM stack, NVS up (muse_settings_init) */
+    bool have = vesper_cred_present();
+    vc_init(&s_claim, have, now_us() / 1000);
+    atomic_store(&s_claimed, have);
+    vesper_ble_set_claim(vc_state_name(&s_claim), NULL, NULL, !have);
     if (!s_node_id[0]) {
         ESP_LOGW(TAG, "no node id set; turns will be refused");
     }
@@ -1211,9 +1447,28 @@ void muse_hatch_chat_forget(void)
     post(CMD_FORGET, 0);
 }
 
+/* Turns need the node claimed too (task 11): until then a press records a note to send once it is. */
 bool muse_hatch_ready(void)
 {
-    return s_cmds && muse_hatch_configured() && muse_wifi_connected();
+    return s_cmds && muse_hatch_configured() && muse_wifi_connected() && atomic_load(&s_claimed);
+}
+
+void vesper_node_forget_credential(void)
+{
+    post(CMD_UNCLAIM, 0);
+}
+
+bool vesper_node_forget_credential_now(void)
+{
+    atomic_store(&s_claimed, false);
+    return vesper_cred_forget();
+}
+
+int vesper_node_status_json(char *out, size_t cap)
+{
+    /* Presence and state only: never the credential, the claim secret or the code. */
+    return snprintf(out, cap, "{\"node_id\":\"%s\",\"credential\":%s,\"claim\":\"%s\"}", s_node_id,
+                    vesper_cred_present() ? "true" : "false", vc_state_name(&s_claim));
 }
 
 void muse_hatch_turn_begin(void)

@@ -39,11 +39,15 @@ static void wipe(void *p, size_t n)
     }
 }
 
+/* Copies s into out, cut to cap - 1 bytes (callers only copy validated ASCII). */
 static void put(char *out, size_t cap, const char *s)
 {
-    if (cap) {
-        snprintf(out, cap, "%s", s);
+    if (!cap) {
+        return;
     }
+    size_t n = bounded_len(s, cap - 1);
+    memcpy(out, s, n);
+    out[n] = '\0';
 }
 
 /* prefix + 16..max-strlen(prefix) url-safe characters */
