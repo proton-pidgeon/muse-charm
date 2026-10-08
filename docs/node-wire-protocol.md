@@ -183,7 +183,7 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
   The node resamples to 16 kHz in its existing decode path.
 - The id stays valid for **10 minutes** (the `phone_tts.py` TTL) and can be fetched more than
   once in that window, so a retry after a dropped connection works. The store is in memory
-  only, capped at 512 ids. Nothing is written to disk, and a backend restart drops every id.
+  only, capped at 512 ids and 64 MiB of clip bytes (when full, `audio_url` is null). Nothing is written to disk, and a backend restart drops every id.
 - A malformed, unknown or expired id gets an identical bare `404 {"error": "not_found"}`.
 
 ## Backend pipeline (what happens inside a turn)

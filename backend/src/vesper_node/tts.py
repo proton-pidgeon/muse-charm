@@ -8,7 +8,8 @@ the phone brain's ElevenLabs voice (``VESPER_PHONE_TTS_VOICE_ID``):
 * :class:`AudioCache`: an in-memory LRU keyed by ``sha256(voice|model|text)``, bounded in
   entries and bytes, with in-flight de-duplication of identical texts;
 * :class:`AudioStore`: capability ids (``secrets.token_urlsafe(18)``, 144 bits) mapped to MP3
-  bytes, with a 10-minute TTL and at most 512 ids. **Memory only, never on disk.** Unlike the
+  bytes, with a 10-minute TTL, at most 512 ids and 64 MiB of clip bytes. **Memory only, never
+  on disk.** Unlike the
   phone door, the ``GET /audio`` route is *also* bearer-gated, because the firmware can send
   headers;
 * ``VESPER_NODE_TTS=off`` is the kill switch. Any failure means ``audio_url`` is null and the
@@ -40,9 +41,11 @@ OUTPUT_FORMAT = "mp3_22050_32"
 TTS_TIMEOUT_S = 4.0
 MAX_TTS_CHARS = 500
 ELLIPSIS = "..."
-MAX_AUDIO_BYTES = 2 * 1024 * 1024
+# A 500-char reply is ~120 KB at 32 kbps; anything near this cap is a provider anomaly.
+MAX_AUDIO_BYTES = 512 * 1024
 AUDIO_TTL_S = 10 * 60
 MAX_AUDIO_IDS = 512
+MAX_STORE_BYTES = 64 * 1024 * 1024
 MAX_CACHE_ENTRIES = 128
 MAX_CACHE_BYTES = 16 * 1024 * 1024
 AUDIO_ID_BYTES = 18  # -> 24 url-safe chars, 144 bits
@@ -111,12 +114,15 @@ class AudioStore:
         *,
         ttl_s: float = AUDIO_TTL_S,
         max_ids: int = MAX_AUDIO_IDS,
+        max_bytes: int = MAX_STORE_BYTES,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ttl_s = ttl_s
         self._max_ids = max_ids
+        self._max_bytes = max_bytes
         self._clock = clock
         self._clips: dict[str, _Clip] = {}
+        self._bytes = 0
 
     def __len__(self) -> int:
         return len(self._clips)
@@ -124,15 +130,20 @@ class AudioStore:
     def sweep(self) -> None:
         now = self._clock()
         for aid in [k for k, c in self._clips.items() if c.expires <= now]:
-            del self._clips[aid]
+            self._bytes -= len(self._clips.pop(aid).audio)
+
+    @property
+    def total_bytes(self) -> int:
+        return self._bytes
 
     def mint(self, audio: bytes) -> str | None:
-        """New id, or ``None`` when full (a returned id must stay live for its TTL)."""
+        """New id, or ``None`` when full by count or bytes (an id stays live for its TTL)."""
         self.sweep()
-        if len(self._clips) >= self._max_ids:
+        if len(self._clips) >= self._max_ids or self._bytes + len(audio) > self._max_bytes:
             return None
         audio_id = secrets.token_urlsafe(AUDIO_ID_BYTES)
         self._clips[audio_id] = _Clip(audio, self._clock() + self._ttl_s)
+        self._bytes += len(audio)
         return audio_id
 
     def get(self, audio_id: str) -> bytes | None:
