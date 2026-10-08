@@ -79,6 +79,9 @@ typedef struct {
  */
 bool vp_url_parse(const char *base, vp_url_t *out);
 
+/* The same check, without parsing into a struct (for small stacks). */
+bool vp_url_valid(const char *base);
+
 /* Writes "<scheme>://<host>[:port]<path><suffix>" (suffix starts with '/').
  * False if it doesn't fit. */
 bool vp_url_join(const vp_url_t *u, const char *suffix, char *out, size_t cap);

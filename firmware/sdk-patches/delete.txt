@@ -1,0 +1,39 @@
+# Files the Vesper patch set deletes from muse-gadget-sdk @ b1a3822 (paths
+# relative to the SDK root). firmware/apply-sdk.sh removes them before it
+# applies the *.patch series. One path per line; a trailing / is a directory.
+#
+# Meta transport (task 09 deliverable, docs/vesper-node-architecture.md §2):
+esp32/main/vm_api.c
+esp32/main/vm_api.h
+esp32/main/link_pairing.c
+esp32/main/link_pairing.h
+esp32/main/noise_control.cpp
+esp32/main/noise_control.h
+esp32/main/ble_server.c
+esp32/main/ble_server.h
+esp32/components/muse/muse_account_api.c
+esp32/components/muse/muse_account_api.h
+esp32/components/muse/muse_chat_session.cpp
+#
+# Dead once those are gone (only they, or app.c's Meta paths, used them):
+esp32/main/vm_connect.h
+esp32/main/noise_upgrade.h
+esp32/main/noise_tunnel.cpp
+esp32/main/noise_tunnel.h
+esp32/main/noise_tunnel_internal.h
+esp32/main/tunnel_netif.c
+esp32/main/tunnel_netif.h
+esp32/main/net_discovery.c
+esp32/main/net_discovery.h
+esp32/main/pairing_signer_policy.c
+esp32/main/pairing_signer_policy.h
+esp32/main/pairing_transcript.c
+esp32/main/pairing_transcript.h
+esp32/main/factory_test.c
+esp32/main/factory_test.h
+esp32/main/bug_report.c
+esp32/main/bug_report.h
+esp32/main/image_fetch.c
+esp32/main/image_fetch.h
+esp32/components/muse/muse_chat_link.c
+esp32/components/noise_core/

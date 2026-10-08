@@ -467,7 +467,10 @@ static void test_urls(void)
                           "http://host/a b", "http://host\r\n/", "http://host/a\\b" };
     for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
         CHECK(!vp_url_parse(bad[i], &u));
+        CHECK(!vp_url_valid(bad[i]));
     }
+    CHECK(vp_url_valid("https://peggy.fly.dev/vesper-node"));
+    CHECK(vp_url_valid("http://[::1]:8796/"));
     char longurl[400];
     snprintf(longurl, sizeof(longurl), "https://h/%0300d", 0);
     CHECK(!vp_url_parse(longurl, &u));

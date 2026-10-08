@@ -149,24 +149,33 @@ static bool url_path_char(char c)
     return is_alnum(c) || (c && strchr("-._~/!$&'()*+,;=:@%", c));
 }
 
-bool vp_url_parse(const char *base, vp_url_t *out)
+/* Parses base into out, or (out == NULL) only checks it, using no stack for
+ * the parts: muse_hatch_configured() runs on small task stacks. */
+static bool url_parse(const char *base, vp_url_t *out)
 {
-    memset(out, 0, sizeof(*out));
+    if (out) {
+        memset(out, 0, sizeof(*out));
+    }
     if (!base) {
         return false;
     }
     const char *p = base;
+    bool https = false;
     if (starts_with_ci(p, "https://")) {
-        out->https = true;
+        https = true;
         p += 8;
     } else if (starts_with_ci(p, "http://")) {
         p += 7;
     } else {
         return false;
     }
-    out->port = out->https ? 443 : 80;
+    if (out) {
+        out->https = https;
+        out->port = https ? 443 : 80;
+    }
 
     size_t hl = 0;
+    const size_t host_cap = sizeof(((vp_url_t *)0)->host);
     if (*p == '[') {
         p++;
         while (*p && *p != ']') {
@@ -174,34 +183,41 @@ bool vp_url_parse(const char *base, vp_url_t *out)
             if (!((c >= '0' && c <= '9') || (lower(c) >= 'a' && lower(c) <= 'f') || c == ':' || c == '.')) {
                 return false;
             }
-            if (hl + 1 >= sizeof(out->host)) {
+            if (hl + 1 >= host_cap) {
                 return false;
             }
-            out->host[hl++] = c;
+            if (out) {
+                out->host[hl] = c;
+            }
+            hl++;
             p++;
         }
         if (*p != ']' || hl == 0) {
             return false;
         }
         p++;
-        out->ipv6 = true;
+        if (out) {
+            out->ipv6 = true;
+        }
     } else {
         while (*p && *p != '/' && *p != ':') {
             char c = *p;
             if (!(is_alnum(c) || c == '-' || c == '.')) {
                 return false;   /* userinfo, query, spaces, ... */
             }
-            if (hl + 1 >= sizeof(out->host)) {
+            if (hl + 1 >= host_cap) {
                 return false;
             }
-            out->host[hl++] = c;
+            if (out) {
+                out->host[hl] = c;
+            }
+            hl++;
             p++;
         }
         if (hl == 0) {
             return false;
         }
     }
-    out->host[hl] = '\0';
 
     if (*p == ':') {
         p++;
@@ -218,23 +234,41 @@ bool vp_url_parse(const char *base, vp_url_t *out)
         if (!digits || port == 0) {
             return false;
         }
-        out->port = (uint16_t)port;
+        if (out) {
+            out->port = (uint16_t)port;
+        }
     }
     if (*p && *p != '/') {
         return false;
     }
     size_t pl = 0;
+    const size_t path_cap = sizeof(((vp_url_t *)0)->path);
     for (; *p; p++) {
-        if (!url_path_char(*p) || pl + 1 >= sizeof(out->path)) {
+        if (!url_path_char(*p) || pl + 1 >= path_cap) {
             return false;
         }
-        out->path[pl++] = *p;
+        if (out) {
+            out->path[pl] = *p;
+        }
+        pl++;
     }
-    while (pl && out->path[pl - 1] == '/') {
-        pl--;
+    if (out) {
+        while (pl && out->path[pl - 1] == '/') {
+            pl--;
+        }
+        out->path[pl] = '\0';
     }
-    out->path[pl] = '\0';
     return true;
+}
+
+bool vp_url_parse(const char *base, vp_url_t *out)
+{
+    return url_parse(base, out);
+}
+
+bool vp_url_valid(const char *base)
+{
+    return url_parse(base, NULL);
 }
 
 static int origin(const vp_url_t *u, char *out, size_t cap)
