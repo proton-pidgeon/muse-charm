@@ -703,6 +703,15 @@ only trigger used to be the Meta app's BLE pairing (deleted in task 09). The wir
   git (each node's running image then needs one USB flash signed with the new key, since the
   running image's key verifies the next), and the production hardening in *NVS encryption:
   decision*.
+- **Follow-ups (review advisories, not done in task 13):**
+  - **Generate the private release key before more nodes are USB-flashed.** Every node flashed
+    with a dev-key image has to be USB-flashed again to move to the release key; doing it first
+    keeps that to one board. Optionally, have `vesper-node firmware publish` check the image's
+    signature block against the release public key, so a wrongly signed build is refused on the
+    Studio rather than by every node.
+  - **Cache or stream the image in `FirmwareStore`.** `GET /firmware/<sha256>.bin` re-reads and
+    re-hashes up to 4 MiB per request. Fine for a few nodes; for a fleet, verify once per
+    publish (or per file change) and stream the file.
 
 ### On-device check (task 13: an OTA served by our backend, human gate)
 
