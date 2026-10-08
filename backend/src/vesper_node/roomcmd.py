@@ -77,6 +77,7 @@ _NOT_A_NAME = frozenset({"a", "an", "the", "called", "now", "room", "is", "this"
 _NOT_A_ROOM_ENDING = frozenset(
     {
         "best",
+        "bomb",
         "bright",
         "chilly",
         "clean",
@@ -89,18 +90,25 @@ _NOT_A_ROOM_ENDING = frozenset(
         "free",
         "freezing",
         "hot",
+        "issue",
         "loud",
+        "max",
         "mess",
         "messy",
+        "min",
         "mode",
         "noisy",
         "occupied",
+        "one",
         "percent",
+        "problem",
         "quiet",
         "ready",
+        "same",
         "setting",
         "stuffy",
         "temperature",
+        "usual",
         "warm",
         "worst",
     }
@@ -146,6 +154,7 @@ def _clean_utterance(text: str) -> str | None:
         return None
     s = _FILLER.sub("", s)
     s = s.rstrip(" .!").strip().lower()
+    s = re.sub(r",?\s+please$", "", s)
     return re.sub(r"\s+", " ", s)
 
 
@@ -164,7 +173,10 @@ def _never_a_room(name: str) -> bool:
         return True
     if _MEASUREMENT.fullmatch(name) or any(w.isdigit() for w in words):
         return True
-    return words[-1] in _NOT_A_ROOM_ENDING
+    last = words[-1]
+    # superlatives ("the coldest", "the warmest") are complaints, not names
+    superlative = len(last) >= 5 and last.endswith("est") and last not in ROOM_NOUNS
+    return last in _NOT_A_ROOM_ENDING or superlative
 
 
 def _ends_in_room_noun(name: str) -> bool:
@@ -175,8 +187,9 @@ def _ends_in_room_noun(name: str) -> bool:
 def detect_room_assignment(text: str) -> RoomAssignment | None:
     """A :class:`RoomAssignment` if the whole utterance assigns this node's room, else None.
 
-    ``RoomAssignment(None)`` means a clear assignment with an unusable name (too long, bad
-    characters): the caller speaks a refusal. None means "not an assignment": the brain gets
+    ``RoomAssignment(None)`` means a clear assignment with an unusable name (bad characters):
+    the caller speaks a refusal. A name longer than ``MAX_ROOM_WORDS`` is treated as ordinary
+    speech, not an assignment. None means "not an assignment": the brain gets
     the turn as usual.
     """
     s = _clean_utterance(text)
@@ -193,8 +206,8 @@ def detect_room_assignment(text: str) -> RoomAssignment | None:
             kind = _OPEN
         if kind != _OPEN and not _ends_in_room_noun(name):
             return None
-        if len(name.replace("-", " ").split()) > MAX_ROOM_WORDS and kind != _OPEN:
-            return None
+        if len(name.replace("-", " ").split()) > MAX_ROOM_WORDS:
+            return None  # a sentence about the room ("the coldest in the house"), not a name
         return RoomAssignment(normalize_room(name))
     return None
 
