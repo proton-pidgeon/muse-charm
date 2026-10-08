@@ -640,7 +640,12 @@ only trigger used to be the Meta app's BLE pairing (deleted in task 09). The wir
      **before** `esp_https_ota_finish()`;
   5. `esp_https_ota_finish()` verifies the image (its own SHA-256 and RSA signature) and
      switches the boot partition;
-  6. the restart waits for the node to be idle (a turn in progress finishes; at most 2 min).
+  6. the restart waits for the node to be idle (a turn in progress finishes; at most 2 min);
+  7. if the node lost its credential meanwhile (`>claim.forget`, a setup reset, a `403`), the
+     update is dropped instead: the boot partition goes back to the running image (marked valid),
+     so the restart ota.c still does comes back on the old firmware, which claims again and is
+     offered the update again. Booting the new image unclaimed would fail its channel check, roll
+     back and blacklist a good version.
 - **Coming back.** The new image boots `PENDING_VERIFY`. `app.c`'s `ota_verify_task` keeps the
   stock 300 s window but, for a fresh image, now needs Wi-Fi **and** an answered update check
   (`200` or `204` with the node's credential). That only happens if the node still has its

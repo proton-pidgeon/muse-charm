@@ -1431,6 +1431,21 @@ static void vesper_update_done(bool applied, const char *detail)
         for (int i = 0; i < 120 && muse_state_mode(NULL) != MUSE_MODE_IDLE; i++) {
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+        if (!vesper_cred_present()) {
+            /* The node was unclaimed (>claim.forget, a setup reset, a 403) while the image downloaded.
+             * Booting it now would fail its channel check, roll back and blacklist a good version, so
+             * keep the running firmware: point the boot partition back at it and mark it valid (it
+             * was: nothing installs over a PENDING_VERIFY image), so the new slot stays merely NEW,
+             * never INVALID. ota.c still restarts when this returns, into the same firmware, which
+             * then claims again and offers the update again once claimed. */
+            const esp_partition_t *running = esp_ota_get_running_partition();
+            bool kept = running && esp_ota_set_boot_partition(running) == ESP_OK &&
+                        esp_ota_mark_app_valid_cancel_rollback() == ESP_OK;
+            s_ota_status = "install_failed";
+            ESP_LOGW(TAG, "update: not installed: node was unclaimed during the install; %s",
+                     kept ? "restarting into the running firmware" : "COULD NOT keep the running firmware");
+            return;
+        }
         muse_state_set_caption("UPDATING - RESTARTING");
         vTaskDelay(pdMS_TO_TICKS(300));
         return;
