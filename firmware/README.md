@@ -9,9 +9,9 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `apply-sdk.sh <SDK_DIR>` | Idempotent. Deletes the Meta transport, applies `sdk-patches/*.patch`, installs `hatch/` and the avatar, and checks that `main/voice.c` is unchanged |
 | `sdk-patches/delete.txt` | Files the patch set removes from the SDK |
 | `sdk-patches/000N-*.patch` | Edits to tracked SDK files (`git apply` format against `b1a3822`) |
-| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11) and the firmware update check (task 13), installed as `<SDK>/esp32/components/muse/vesper/` |
+| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11), the firmware update check (task 13) and the idle announcement poll (task 18), installed as `<SDK>/esp32/components/muse/vesper/` |
 | `hatch/VERSION` | The firmware version (`MAJOR.MINOR.PATCH`) the build stamps into the image (task 13); bump it for every release |
-| `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers and the update check, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
+| `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers, the update check and the announcement parser/scheduler, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
 | `avatar/` | The Vesper "Iconic" cyborg-face avatar (task 14; it replaced task 04's owl, now retired) |
 | `Makefile` | `make -C firmware test`, `live-turn`, `live-claim` and `live-ota` (host only, no ESP-IDF) |
 
@@ -35,13 +35,17 @@ stays a re-clonable upstream at `b1a3822`, and `apply-sdk.sh` rebuilds the Vespe
    - since task 13, `0005`: `ota.c` gains `ota_start_request` (the stock `ota_start` is
      unchanged), `app.c` registers it as the node's installer and keeps a fresh image only once
      the update server has answered, the console's `>ota.check`, `vesper/vesper_ota.c` in the
-     build, and `PROJECT_VER` from `hatch/VERSION` (see *Firmware updates* below).
+     build, and `PROJECT_VER` from `hatch/VERSION` (see *Firmware updates* below);
+   - since task 18, `0006`: `vesper/vesper_announce.c` in the build (see *Announcements*
+     below).
 
    `0004` edits lines that `0002` added (in `app.c` and `muse_glue.c`), so `apply-sdk.sh`
-   can't ask "is `0002` applied?" of `0002` alone once `0004` is on top. It first asks it of the
-   whole series: it reverse-applies the patches, last to first, to a scratch copy of the files
-   they touch. If that works, the tree is fully patched. Otherwise it applies patch by patch as
-   before. Run it twice and the second run changes nothing.
+   can't ask "is `0002` applied?" of `0002` alone once `0004` is on top. It asks it of a prefix
+   of the series instead: it reverse-applies the first k patches, last to first, to a scratch
+   copy of the files they touch, and takes the longest prefix that reverses cleanly as what the
+   tree already has (since task 18; before, only "all of them" was recognised, so a tree
+   patched by an older checkout failed on the newest patch). The rest is applied on top, in
+   order. Run it twice and the second run changes nothing.
 3. **New Vesper-owned sources** are whole files in `hatch/`, copied into an SDK path that the
    SDK's `.gitignore` already ignores (`components/muse/vesper/`, like `components/muse/avatar/`).
 
@@ -78,7 +82,8 @@ build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,
 (`0x1f1000`, 51% of the app partition free). Task 13's update check keeps it at 2,035,712
 bytes signed (2,031,616 unsigned; the signed image is padded to the signature block), so an
 update always fits the other 4 MiB slot. Task 14's avatar swap (owl to Iconic face) leaves it
-at 2,035,712 bytes.
+at 2,035,712 bytes. Task 18's announcement poll (firmware 1.0.2) keeps it at 2,035,712 bytes
+signed (`0x1f1000`, 51% free; fresh `b1a3822` tree, 0 compiler warnings).
 
 **Kept byte-identical:**
 
@@ -772,6 +777,68 @@ for Kevin, once this branch is merged:
 
 To go back to `http://192.168.5.16:8797` (the LAN stopgap) afterwards, set `>hatch.host=` again;
 turns work over either, updates only over https.
+
+### Announcements (task 18)
+
+Timers and reminders set by voice on a node (the brain's task-18 tools) are announced on that
+node when they fall due. The node asks for them (`docs/node-wire-protocol.md`,
+*`GET /announcements`*); nothing is pushed to it.
+
+- **When:** every 15 s while the node is idle: claimed and online, no turn, claim request or
+  update install in progress, nothing being said, Muse in `IDLE` mode, not resting. The first
+  poll is 15 s after boot. Errors back off 15 s → 30 s → 60 s; a `429` waits at least its
+  `Retry-After`; a `403 node_unauthorized` claims again, as on `/turn`. Announcements left
+  pending by a press (below) are said before any new poll. Polling pauses while
+  Muse rests (asleep on battery), so announcements due then are said on waking (the brain
+  drops anything more than 6 hours overdue).
+- **Request:** the turn's headers (bearer, `X-Node-Id`, `X-Vesper-Node-Protocol`,
+  `X-Node-Credential`) plus `Accept: application/json`, no redirects. Timeouts are split as on
+  `/turn`: 2 s to connect (DNS + TCP + TLS), then 8 s for the response (the backend claims from
+  the brain in up to 3 s and mints speech in up to 2 s before it answers, so a slow but
+  answering backend is waited for; past that the poll is a failure and backs off).
+- **Parsing:** `hatch/vesper_announce.c`, pure C like `vesper_proto.c` and host-tested
+  (`hatch/test/test_vesper_announce.c`): the whole body must be one JSON object under 8 KiB with
+  an `announcements` array; only its first 5 entries count; an entry without a non-empty string
+  `text` of at most 800 bytes is dropped; `audio_url` follows the `message_done.audio_url`
+  rules exactly (`vp_resolve_audio_url`: relative, on the configured server, or no speech).
+- **Saying them:** each one becomes a message of a "turn" the hatch task runs itself. The MP3
+  is fetched, decoded and resampled by the same code as a reply's (task 10); with no
+  `audio_url` (TTS off or failed, or refused) the caption is paced over silence. The voice task
+  (`muse_voice.c`, unchanged) only plays audio during a turn, so the decoded audio goes to a
+  private 1 s stream buffer that the hatch task writes to the speaker itself
+  (`muse_audio_write`, 20 ms chunks), with the caption following it while Muse stays `IDLE`.
+  500 ms of silence separates announcements (it also keeps the I2S DMA from replaying stale
+  audio while the next MP3 is opened), and the last caption stays up for 2 s. The screen is
+  woken if it was asleep on USB power. No voice-task event is emitted, and the text is never
+  logged (the log has counts only).
+- **A talk press always wins:** a press puts Muse in `LISTENING` at once, and the hatch task
+  checks that before every 20 ms chunk and stops; the press's `CMD_BEGIN` would end it anyway.
+  A poll is skipped while a command is queued. The one window a press can't cut is the GET
+  itself (the hatch task is inside `esp_http_client` then, and `CMD_BEGIN` waits in its queue):
+  honestly, that is **up to ~2 s when the server is unreachable** (the connect timeout) and
+  **up to ~8 s after connecting if the backend is slow to answer** (the response timeout; the
+  backend itself caps the poll at ~5 s: 3 s claim + 2 s speech, so ~5–6 s through Peggy is the
+  realistic worst case, and ~0.5 s the usual one). A poll on a healthy LAN+Peggy path takes
+  well under a second, and nothing is polled unless the node is idle. Each announcement MP3
+  open is likewise a short window (up to ~2 s, the same connect timeout) a press can't cut,
+  in addition to the GET.
+- **Deferred, not discarded:** the backend hands each announcement out only once, so the node
+  never throws a fetched one away because of a press. A list fetched while a press landed is
+  kept (`s_ann_pending`) and said at the next idle moment with no new GET; a list interrupted
+  mid-way keeps the announcements not yet started (`vn_keep_from`, host-tested) and says them
+  next time, while **the one that was mid-speech is dropped** (never repeat an alarm, never
+  talk over Kevin). Pending ones are dropped only if the server settings change, the node is
+  unclaimed, or they are older than 10 minutes (`VN_PENDING_MAX_MS`, the backend's audio TTL;
+  `vn_pending_stale`, host-tested). An MP3 that expired anyway is paced over silence, as for a refused `audio_url`.
+- **Host checks:** `make -C firmware test` runs `test_vesper_announce` under ASan/UBSan: valid,
+  empty, malformed, truncated and oversize bodies, bad entries, refused `audio_url`s, the 15 s /
+  backoff / `Retry-After` schedule, what a press leaves pending (`vn_keep_from`), the JSON array
+  helpers it adds to `vesper_proto.c`, and a 20,000-round fuzz.
+- **Known limits (on-device check pending):** the voice task's 320 ms pre-roll records while
+  an announcement plays, so a press during one may send its last fraction of a second to STT
+  along with the note. The hatch task and the voice task both write to the speaker
+  (`muse_audio_write` has one static stereo buffer) only if a bench chirp/MP3 test is requested
+  during an announcement.
 
 ## Decision: the avatar is a patch set tracked in THIS repo (not an SDK fork)
 

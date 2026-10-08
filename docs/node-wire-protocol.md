@@ -35,11 +35,14 @@ over 6PN. **The backend's own routes have no `/vesper-node` prefix.**
 | `POST https://peggy.fly.dev/vesper-node/admin/claim` | `POST /admin/claim` | node bearer + admin token (route off unless `VESPER_NODE_ADMIN_TOKEN` is set) |
 | `GET https://peggy.fly.dev/vesper-node/firmware/manifest` | `GET /firmware/manifest` | node bearer + node credential (task 13) |
 | `GET https://peggy.fly.dev/vesper-node/firmware/{sha256}.bin` | `GET /firmware/{sha256}.bin` | node bearer + node credential (task 13) |
+| `GET https://peggy.fly.dev/vesper-node/announcements` | `GET /announcements` | node bearer + node credential (task 18) |
 | *(not routed by Peggy)* | `GET /healthz` | none. Returns `{"ok": true}` only, no detail. |
 
 The task text names the route `POST /vesper-node/turn`. That is the node-facing path. The
 backend serves it as `/turn` because Peggy strips the prefix. Peggy must not route
 `/vesper-node/healthz` to the backend, though it would be harmless if it did.
+Peggy's handle is a wildcard (`handle /vesper-node/*` + `strip_prefix`, no path allowlist), so
+a new backend route such as task 18's `/announcements` needs no Peggy change or redeploy.
 
 Backend default bind: `VESPER_NODE_HOST=::`, `VESPER_NODE_PORT=8796`. `::` listens on every
 interface: the 6PN address `fdaa:3e:60bd:a7b:9016:9c37:ac65:d902` (for the Peggy handle) and
@@ -505,6 +508,56 @@ URL from the manifest; it builds this one from the hash, on its configured serve
   node that came back without its credential, is rolled back automatically. Nothing is
   installed while the running image is itself still `PENDING_VERIFY`.
 
+## `GET /announcements`: due timers and reminders (task 18)
+
+A claimed node polls this while it is idle (firmware: every 15 s). The backend claims the
+node's due timers and reminders from the brain and returns them, each with speech made exactly
+as a reply's. Same auth as `/turn`: the shared bearer, `X-Node-Id` and `X-Node-Credential`
+(`401 unauthorized` / `400 bad_node_id` / `403 node_unauthorized` exactly as for `/turn`; a
+`403` sends the node back to the claim flow). No request body.
+
+`200 application/json`, `Cache-Control: no-store`:
+
+```json
+{"announcements": [
+  {"text": "Your ten minute timer is done.", "audio_url": "audio/<id>.mp3"},
+  {"text": "Reminder: call the plumber.", "audio_url": null}
+]}
+```
+
+- Oldest first, at most 5, usually `[]`. Each is delivered **at most once**: the brain marks it
+  delivered when the backend claims it, so a node that drops a reply (or is interrupted by a
+  press) does not get it again.
+- `text`: one short spoken sentence (≤ 200 chars), built by the brain from a fixed template and
+  the stored label. No LLM, no markdown. Show it as the caption.
+- `audio_url`: an MP3 of `text` in the reply voice, under **the same rules as
+  `message_done.audio_url`**: a relative reference (`audio/<id>.mp3`) resolved against the
+  request URL, so `…/vesper-node/announcements` → `…/vesper-node/audio/<id>.mp3`; fetched with
+  the same headers as `GET /audio/{id}.mp3`; 10-minute TTL. `null` when TTS is off or failed:
+  show the caption only.
+- The brain being down, slow (3 s), refusing, or answering anything malformed is **`200
+  {"announcements": []}`** plus a warning in the backend log. The poll never gets a 5xx from
+  that.
+- The poll answers in bounded time, because the brain has already marked the items delivered
+  when it answers the claim: a late reply would lose them. The claim has 3 s; the speech for
+  all items is minted **concurrently under one 2 s budget**, and an item whose speech isn't
+  ready in time comes back with `audio_url: null` (caption only) rather than late. So a poll
+  takes at most ~5 s plus overhead; the firmware waits 8 s for the response once connected.
+- `429 rate_limited` with `Retry-After`: this node polled again within 5 s. Back off.
+
+Backend side: `POST <brain>/node/announcements/claim` with `{"device_id": <node id>}` and
+`Authorization: Bearer <VESPER_BRAIN_TOKEN>` (the `/ask` token). Its URL is the configured
+`/ask` URL with the `/ask` path replaced (`VESPER_BRAIN_URL` + `/node/announcements/claim`).
+3 s timeout, **no retries and no redirects** (a retried claim could only lose announcements).
+The reply is validated strictly: a list, of which only the first 5 entries are looked at, each
+an object with a non-empty string `text` of at most 200 chars; anything else is dropped and
+counted in the log. A kept entry missing the brain contract's `id` / `kind` is still spoken
+(only `text` reaches the node) but counted in the log as `unlabeled`, so schema drift shows.
+Only `GET` reaches the claim: `HEAD` (or any other method) is `405` and never spends an
+announcement. Announcements are not conversation turns: they never enter the node's
+conversation memory or the memory-candidate queue. Their text is never logged (node id, counts
+and status codes only).
+
 ## Operator: firmware
 
 ```sh
@@ -661,3 +714,7 @@ of this changes the wire shape, so the version stays 1.
   change: the node sees the same events, so the version stays 1.
 - **v1, memory candidates (2026-10-08, task 17):** Q4 amended again (single-exchange memory
   candidates staged after the turn). No wire change, so the version stays 1.
+- **v1, announcements (2026-10-08, task 18):** added `GET /announcements` (same node auth as
+  `/turn`, `429 rate_limited` under 5 s per node) for brain timers/reminders, whose
+  `audio_url` follows the `message_done.audio_url` rules. A new route only, so the version
+  stays 1 (see *Versioning*). Peggy's wildcard handle needs no change.

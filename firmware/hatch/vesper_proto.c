@@ -813,6 +813,68 @@ bool vp_json_uint(const char *json, size_t len, const char *key, uint32_t *out)
     return true;
 }
 
+bool vp_json_object_ok(const char *json, size_t len)
+{
+    jcur_t c = { json, json + len };
+    jws(&c);
+    if (c.p >= c.end || *c.p != '{' || !jskip(&c)) {
+        return false;
+    }
+    jws(&c);
+    return c.p == c.end;
+}
+
+bool vp_json_array(const char *json, size_t len, const char *key, vp_json_iter_t *it)
+{
+    jcur_t c = { json, json + len };
+    memset(it, 0, sizeof(*it));
+    it->done = true;
+    if (jfind(&c, key) != VP_JSON_OTHER || c.p >= c.end || *c.p != '[') {
+        return false;
+    }
+    it->p = c.p + 1;
+    it->end = c.end;
+    it->first = true;
+    it->done = false;
+    return true;
+}
+
+bool vp_json_next(vp_json_iter_t *it, const char **elem, size_t *elem_len)
+{
+    *elem = NULL;
+    *elem_len = 0;
+    if (it->done || it->bad) {
+        return false;
+    }
+    jcur_t c = { it->p, it->end };
+    jws(&c);
+    if (c.p >= c.end) {
+        it->bad = true;
+        return false;
+    }
+    if (it->first && *c.p == ']') {
+        it->done = true;
+        return false;
+    }
+    it->first = false;
+    const char *start = c.p;
+    if (*c.p == ',' || *c.p == ']' || !jskip(&c)) {
+        it->bad = true;
+        return false;
+    }
+    const char *stop = c.p;
+    jws(&c);
+    if (c.p >= c.end || (*c.p != ',' && *c.p != ']')) {
+        it->bad = true;
+        return false;
+    }
+    it->done = *c.p == ']';
+    it->p = c.p + 1;
+    *elem = start;
+    *elem_len = (size_t)(stop - start);
+    return true;
+}
+
 /* ---- SSE framing ---- */
 
 static bool s_line_started(const vp_sse_t *s)

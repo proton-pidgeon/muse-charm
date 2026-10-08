@@ -1,0 +1,12 @@
+diff --git a/esp32/components/muse/CMakeLists.txt b/esp32/components/muse/CMakeLists.txt
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -67,6 +67,8 @@
+     list(APPEND srcs "vesper/vesper_claim.c" "vesper/vesper_cred.c" "vesper/vesper_ble.c")
+     # Vesper (task 13): the firmware update check (the install is main/ota.c's).
+     list(APPEND srcs "vesper/vesper_ota.c")
++    # Vesper (task 18): the idle announcement poll's core (timers, reminders).
++    list(APPEND srcs "vesper/vesper_announce.c")
+     if(CONFIG_MUSE_BOARD_WAVESHARE_S3_175C OR CONFIG_MUSE_BOARD_WAVESHARE_S3_175)
+         # One driver: the 1.75 differs only in pins (its BSP's) and its PWR key.
+         list(APPEND srcs "boards/board_waveshare_s3_175c.c" "boards/muse_lcd_bands.c")
