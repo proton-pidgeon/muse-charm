@@ -373,16 +373,22 @@ static void test_decode_discipline(void)
 
 static void test_timing(void)
 {
-    /* 32 kbps: 4000 bytes is 1 s */
-    CHECK(va_speech_frames(0, 4000, 32, 16000) == 16000);
-    CHECK(va_speech_frames(8000, 4000, 32, 16000) == 24000);
-    CHECK(va_speech_frames(8000, 0, 32, 16000) == 8000);
-    CHECK(va_speech_frames(0, 0, 32, 16000) == 1);        /* known, never "unknown" */
-    CHECK(va_speech_frames(1234, 99999, 0, 16000) == 1234); /* no bitrate yet */
-    CHECK(va_speech_frames(1234, 99999, -1, 16000) == 1234);
-    CHECK(va_speech_frames(UINT32_MAX - 1, UINT64_MAX / 1024, 8, 16000) == UINT32_MAX);
+    /* 32 kbps at 16 kHz out: 4000 bytes made 16000 frames */
+    CHECK(va_speech_frames(16000, 4000, 4000) == 32000);
+    CHECK(va_speech_frames(16000, 4000, 0) == 16000);
+    CHECK(va_speech_frames(8000, 2000, 6000) == 32000);
+    /* nothing said yet: not known */
+    CHECK(va_speech_frames(0, 0, 99999) == 0);
+    CHECK(va_speech_frames(0, 500, 99999) == 0);
+    CHECK(va_speech_frames(1234, 0, 99999) == 1234);
+    /* the device's first turn: 5347 bytes, 1.31 s; after the first 2 frames (~230 bytes, 836 frames) */
+    uint32_t est = va_speech_frames(836, 230, 5347 - 230);
+    CHECK(est > 19000 && est < 22000);
+    /* clamped, never wrapped */
+    CHECK(va_speech_frames(UINT32_MAX - 1, 1, UINT64_MAX) == UINT32_MAX);
+    CHECK(va_speech_frames(16000, 4000, UINT64_MAX) == UINT32_MAX);
     /* a 500-char reply's MP3 (~140 KB at 32 kbps) */
-    CHECK(va_speech_frames(0, 140000, 32, 16000) == 560000);
+    CHECK(va_speech_frames(16000, 4000, 136000) == 560000);
 
     CHECK(va_silent_frames(32, 16000, 16) == 32000);
     CHECK(va_silent_frames(0, 16000, 16) == 0);

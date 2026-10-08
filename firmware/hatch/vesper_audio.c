@@ -194,17 +194,16 @@ bool va_mp3_drained(const va_mp3buf_t *b)
 
 /* ---- Timing ---- */
 
-uint32_t va_speech_frames(uint32_t decoded, uint64_t bytes_left, int kbps, uint32_t out_rate)
+uint32_t va_speech_frames(uint32_t said, uint64_t said_bytes, uint64_t bytes_left)
 {
-    if (kbps <= 0) {
-        return decoded;
+    if (!said || !said_bytes) {
+        return said;
     }
-    uint64_t rest = bytes_left * 8u * out_rate / ((uint64_t)kbps * 1000u);
-    uint64_t total = (uint64_t)decoded + rest;
-    if (total > UINT32_MAX) {
-        total = UINT32_MAX;
+    if (bytes_left > ((uint64_t)1 << 31)) {
+        bytes_left = (uint64_t)1 << 31;   /* far past any MP3 the node takes; keeps the product in range */
     }
-    return total ? (uint32_t)total : 1;
+    uint64_t total = (uint64_t)said + bytes_left * said / said_bytes;
+    return total > UINT32_MAX ? UINT32_MAX : (uint32_t)total;
 }
 
 uint32_t va_silent_frames(size_t chars, uint32_t out_rate, unsigned cps)

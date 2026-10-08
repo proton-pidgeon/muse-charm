@@ -181,8 +181,9 @@ typedef struct {
     va_mp3buf_t mp3;
     mp3dec_t dec;
     va_resampler_t rs;
-    int rate, channels, kbps;
+    int rate, channels;
     uint32_t frames;         /* MP3 frames decoded */
+    uint64_t said_bytes;     /* the MP3 bytes those frames took */
     int64_t t_open, t_headers, t_fetched, t_first, last_rx_us;
 } tts_state_t;
 
@@ -709,8 +710,9 @@ static bool tts_open(int i)
     s_tts.content_length = -1;
     s_tts.received = 0;
     s_tts.cut_short = s_tts.flushed = false;
-    s_tts.rate = s_tts.channels = s_tts.kbps = 0;
+    s_tts.rate = s_tts.channels = 0;
     s_tts.frames = 0;
+    s_tts.said_bytes = 0;
     s_tts.t_open = now_us();
     s_tts.t_headers = s_tts.t_fetched = s_tts.t_first = 0;
     esp_http_client_config_t cfg = {
@@ -855,19 +857,19 @@ static void tts_decode(void)
             s_tts.t_first = now_us();
         }
         push_reply(s_tts_out, n);
-        s_tts.kbps = info.bitrate_kbps;
+        s_tts.said_bytes += (uint64_t)info.frame_bytes;
         s_tts.frames++;
     }
     va_mp3_consume(&s_tts.mp3, off);
 
     uint32_t said = s_turn.pcm_out - m->pcm_start;
-    if (s_tts.kbps > 0) {
-        /* what's out, plus what the bitrate says the rest (buffered and still to come) holds */
+    if (said) {
+        /* what's out, plus what the rest (buffered and still to come) holds at the same bytes per frame */
         uint64_t left = s_tts.mp3.len;
         if (!s_tts.mp3.ended && s_tts.content_length > 0 && s_tts.received < (uint64_t)s_tts.content_length) {
             left += (uint64_t)s_tts.content_length - s_tts.received;
         }
-        m->pcm_frames = va_speech_frames(said, left, s_tts.kbps, MIC_RATE);
+        m->pcm_frames = va_speech_frames(said, s_tts.said_bytes, left);
     }
     if (!va_mp3_drained(&s_tts.mp3)) {
         return;

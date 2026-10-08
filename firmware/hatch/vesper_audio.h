@@ -98,13 +98,14 @@ bool va_mp3_drained(const va_mp3buf_t *b);
 /* ---- Timing (caption sync) ---- */
 
 /*
- * How long the message's speech will be, in out_rate frames: what's decoded
- * so far plus what the bitrate says the rest holds (bytes_left: buffered
- * plus still to download). kbps <= 0 (no frame decoded yet) gives just the
- * decoded part. Never 0 once anything is known, so a caption timed by it
- * never falls back to the reading-pace guess mid-speech.
+ * How long the message's speech will be, in output frames: what's out so far
+ * (said frames, made from said_bytes of MP3) plus what the rest (bytes_left:
+ * buffered plus still to download) holds at the same bytes-per-frame. The
+ * measured ratio, not a frame header's bitrate: the backend's MP3 opens with
+ * a frame claiming 56 kbps in a file that averages 32 (seen on device), and
+ * VBR would be worse. Nothing said yet: returns said (0, "not known").
  */
-uint32_t va_speech_frames(uint32_t decoded, uint64_t bytes_left, int kbps, uint32_t out_rate);
+uint32_t va_speech_frames(uint32_t said, uint64_t said_bytes, uint64_t bytes_left);
 
 /* A message's caption time with no speech (the stock pace): chars at cps. */
 uint32_t va_silent_frames(size_t chars, uint32_t out_rate, unsigned cps);
