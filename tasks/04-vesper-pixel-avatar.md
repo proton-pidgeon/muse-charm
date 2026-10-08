@@ -7,17 +7,17 @@
 **Est. effort:** not stated in source
 
 ## Deliverables
-- [ ] Custom `components/muse/avatar/muse_pixel.c` implementing `muse_pixel.h` (`render(pose)` / `scale()` / `set_size()` / `accent(mode)`), picked up by the `components/muse/CMakeLists.txt` glob
-- [ ] 64×64 palette-indexed art, Vesper-original (Meta's default character is not rights-granted); reference only: `~/workspace/avatars/.frames/`
-- [ ] All 7 modes (BOOT / IDLE / LISTENING / THINKING / SPEAKING / ERROR / OFF) + happy overlay; SDK modes mapped to Vesper personality (IDLE/LISTENING/THINKING/SPEAKING are the live ones; BOOT/ERROR/OFF for completeness)
-- [ ] GIF previews for every mode via `tools/muse/make_gifs.py`
-- [ ] Decide and record where the avatar lives (SDK fork vs patch set tracked in this repo, per F1's "Fork the SDK (or patch set tracked in this repo)")
+- [x] Custom `components/muse/avatar/muse_pixel.c` implementing `muse_pixel.h` (`render(pose)` / `scale()` / `set_size()` / `accent(mode)`), picked up by the `components/muse/CMakeLists.txt` glob
+- [x] 64×64 palette-indexed art, Vesper-original (Meta's default character is not rights-granted); reference only: `~/workspace/avatars/.frames/`
+- [x] All 7 modes (BOOT / IDLE / LISTENING / THINKING / SPEAKING / ERROR / OFF) + happy overlay; SDK modes mapped to Vesper personality (IDLE/LISTENING/THINKING/SPEAKING are the live ones; BOOT/ERROR/OFF for completeness)
+- [x] GIF previews for every mode via `tools/muse/make_gifs.py`
+- [x] Decide and record where the avatar lives (SDK fork vs patch set tracked in this repo, per F1's "Fork the SDK (or patch set tracked in this repo)")
 
 ## Definition of done
-- [ ] `tools/muse/make_gifs.py` produces a GIF per mode + the happy overlay; reviewed by eye
-- [ ] `tools/muse/board.sh build aipi` completes with the custom avatar
-- [ ] Per-frame render time measured or estimated against the <10 ms S3 frame budget, with the result recorded
-- [ ] Simulator `ctest` (`esp32/simulator/build`) still green
+- [x] `tools/muse/make_gifs.py` produces a GIF per mode + the happy overlay; reviewed by eye
+- [x] `tools/muse/board.sh build aipi` completes with the custom avatar
+- [x] Per-frame render time measured or estimated against the <10 ms S3 frame budget, with the result recorded
+- [x] Simulator `ctest` (`esp32/simulator/build`) still green
 
 ## Anti-deliverables (do NOT build in this task)
 - Converting the 1600×1600 photorealistic frames. They are "reference/inspiration, not convertible assets"
