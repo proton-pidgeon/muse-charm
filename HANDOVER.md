@@ -225,3 +225,18 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Live infra: com.vesper.node on tcp6 *:8796 (launchd); socat stopgap TCP4-LISTEN:8797 -> TCP6:[::1]:8796 alive (board reaches backend at http://192.168.5.16:8797). Dual-stack bind fix still preferred over the stopgap.
 - Backup provisioner: ~/builds/muse-charm/provision_interactive.py (survives /tmp clears).
 - Task 10 UNBLOCKED. DoD: a PTT turn on the real board returns SPOKEN audio from the speaker — captions alone do not pass (stock firmware did captions; the Vesper firmware fills the TTS slot).
+
+## 2026-10-08 ~10:00 CDT — Coordinator resumed after VM runtime restart (adopt, don't restart)
+- Previous coordinator died ~09:56 CDT ("submission rejected during restart drain"). Verified live state before touching anything.
+- FOUND: task 10's `claude -p /implement tasks/10-firmware-tts-playback.md` still alive on the Studio (PID 19679, started 09:40, adopted — NOT re-dispatched). Worktree `.claude/worktrees/agent-a3a2a50378399f399` (branch impl/10-firmware-tts-playback) active; firmware/hatch/ files incl. new vesper_audio.c modified within the hour.
+- Fleet recheck: only mac-daddy31337 valid. ravenz-node revoked, alienlap/andromedaengine unknown, bb-mm revoked.
+- Board #11 corrections (was drifting): issue #7 (F1) → Done (board runs Vesper firmware, Wi-Fi connected — "awaiting Kev" was stale); issue #10 (B4) → Todo/HELD (was wrongly Done — zero deliverables built); issue #6 (B2) summary fixed (reroute to Studio after task 10).
+- Board verified live: banner "Muse Gadget (Vesper node)", node_id=homelink-c86320, node token set, wifi_connected Westview 192.168.4.85.
+- Watch: background watcher on PID 19679; next check at ~55 min elapsed if still running (60-min rule).
+
+## 2026-10-08 ~10:14 CDT — Task 10 (F2 TTS) GREEN + merged; task 08 dispatched
+- Task 10 merged to main (32a9272 + 08db154): TTS playback slot wired — fetch message_done.audio_url, decode MP3, resample 22050 Hz -> 16 kHz (new vesper_audio.c, anti-aliased), captions timed by measured speech.
+- On-device serial evidence (AiPi /dev/cu.usbmodem83201): PTT "what is two plus two" -> transcript 21 chars -> TTS GET 200, 5347 bytes audio/mpeg in 26 ms -> 50 MP3 frames -> 20898 samples (1.31 s speech), first audio 57 ms after GET -> "muse_voice: muse reply: 1.31s of audio", PCM written to speaker, captions paged with speech. Second turn 0.71 s. Barge-in: "reply interrupted", "turn cancelled", no leftover audio. No PSRAM leak (5,223 KiB free). Token appears 0 times in logs.
+- HUMAN GATE (documented in task file): agent cannot hear the speaker — Kevin's listen check: hold talk, say "what is two plus two", release, expect Vesper's voice in ~5-8 s with captions. Board still flashed + provisioned; needs com.vesper.node (:8796) + socat (:8797) up.
+- Issue #8 -> Done. Board #11 corrected.
+- Task 08 (B2 registry) dispatched to Studio: claude -p "/implement tasks/08-node-registry.md" (background proc_b161201eced9). ravenz-node still revoked — Studio only.
