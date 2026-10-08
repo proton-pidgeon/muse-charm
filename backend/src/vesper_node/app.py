@@ -17,13 +17,16 @@ The wire protocol is ``docs/node-wire-protocol.md`` (v1). Backend routes (Peggy 
 * ``POST /admin/claim``: approve a claim code (only if ``VESPER_NODE_ADMIN_TOKEN`` is set).
 * ``GET /firmware/manifest``, ``GET /firmware/<sha256>.bin``: the published node firmware
   (task 13, :mod:`vesper_node.firmware`), same node auth as ``/turn``.
+* ``GET /announcements``: due timers/reminders for the node (task 18), claimed from the brain
+  and spoken with the reply TTS; same node auth as ``/turn``, at most one poll per 5 s.
 
 Auth is checked before the body is read, as in ``vesper-voice/.../brain_service.py``.
 :class:`BearerAuth` is a pure-ASGI middleware that checks ``Authorization: Bearer
 <VESPER_NODE_TOKEN>`` with ``hmac.compare_digest`` on every route except ``GET /healthz``,
 and answers 401 **without ever calling** ``receive``. The body is never consumed on a bad
 token. The same middleware then does the per-route second factor, still before the body
-(task 08, conflict C2): ``/turn``, ``/audio`` and ``/firmware`` (task 13) need a registered
+(task 08, conflict C2): ``/turn``, ``/audio``, ``/firmware`` (task 13) and ``/announcements``
+(task 18) need a registered
 ``X-Node-Id`` plus its ``X-Node-Credential`` (403 ``node_unauthorized`` otherwise);
 ``/admin/*`` needs
 ``X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>``.
@@ -46,6 +49,12 @@ deterministic patterns in a worker thread and, if it is significant ("remember t
 appends one candidate line to ``~/memory/node-candidates.jsonl`` for Vesper to review. That
 path adds no latency to the turn, cannot fail it, never calls the brain and never reads
 curated memory. Room-assignment turns and failed turns are never considered.
+
+Announcements (task 18): the node polls ``GET /announcements`` while idle. The backend claims
+the node's due timers/reminders from the brain (``POST /node/announcements/claim``, at most
+once each), mints TTS for each sentence exactly as a reply's and returns them. They are not
+conversation turns: they never touch conversation memory or the memory-candidate queue, and
+their text is never logged. A brain failure is an empty list, never a 5xx.
 """
 
 from __future__ import annotations
@@ -54,6 +63,7 @@ import asyncio
 import hmac
 import json
 import logging
+import math
 import re
 import sys
 import time
@@ -94,6 +104,7 @@ MAX_BODY_BYTES = 512 * 1024  # ~16.4 s of 16 kHz PCM16: the firmware's 15 s max 
 UPLOAD_TIMEOUT_S = 30.0
 MAX_CONCURRENT_TURNS = 2
 BUSY_RETRY_AFTER_S = 2
+ANNOUNCE_MIN_INTERVAL_S = 5.0  # per node; the firmware polls every 15 s
 SSE_PREAMBLE_BYTES = 2048  # Peggy HTTP/2 edge buffers tiny streams (memory: SSE priming)
 SSE_PING_S = 10.0
 AUDIO_NAME_RE = re.compile(r"^([A-Za-z0-9_-]{22,64})\.mp3$")
@@ -140,8 +151,10 @@ def _single_header(scope: Scope, name: bytes) -> tuple[str | None, bool]:
 
 
 def _is_node_route(method: str, path: str) -> bool:
-    return (method == "POST" and path == "/turn") or (
-        method in {"GET", "HEAD"} and path.startswith(("/audio/", "/firmware/"))
+    return (
+        (method == "POST" and path == "/turn")
+        or (method in {"GET", "HEAD"} and path.startswith(("/audio/", "/firmware/")))
+        or (method in {"GET", "HEAD"} and path == "/announcements")
     )
 
 
@@ -149,7 +162,8 @@ class BearerAuth:
     """Pure-ASGI auth gate. A rejected request's ``receive`` is never called (body unread).
 
     Layer 1 (every route but ``/healthz``): the shared ``VESPER_NODE_TOKEN`` bearer -> 401.
-    Layer 2 (task 08): ``/turn`` + ``/audio``: registered node + credential -> 403;
+    Layer 2 (task 08): ``/turn``, ``/audio``, ``/firmware``, ``/announcements``: registered
+    node + credential -> 403;
     ``/claim/*``: well-formed ``X-Node-Id``; ``/admin/*``: admin token -> 403 (404 if the
     admin route is disabled). It also stamps ``X-Vesper-Node-Protocol: 1`` on every response.
     """
@@ -249,6 +263,8 @@ def _route_label(scope: Scope) -> str:
         return "claim"
     if path.startswith("/firmware/"):
         return "firmware"
+    if path == "/announcements":
+        return "announcements"
     if path.startswith(ADMIN_PREFIX):
         return "admin"
     return "other"
@@ -331,6 +347,7 @@ def create_app(
         **tts_kwargs,
     )
     state = {"inflight": 0}
+    last_announce_poll: dict[str, float] = {}  # node id -> clock(); registered nodes only
     tasks: set[asyncio.Task[None]] = set()
 
     def release() -> None:
@@ -757,6 +774,37 @@ def create_app(
             {"node_id": node_id, "room": room.strip(), "replaces_access": replaces},
             headers={"Cache-Control": "no-store"},
         )
+
+    # ---- Announcements (task 18) ----
+
+    @app.get("/announcements")
+    async def announcements(request: Request) -> Response:
+        # Bearer + registered node + credential passed in BearerAuth. Not a turn: no STT, no
+        # /ask, no conversation memory, no memory candidate. The text is never logged.
+        node: NodeAuth = request.scope[NODE_AUTH_SCOPE_KEY]
+        node_id = node.node_id
+        now = clock()
+        last = last_announce_poll.get(node_id)
+        if last is not None and now - last < ANNOUNCE_MIN_INTERVAL_S:
+            wait = max(1, math.ceil(ANNOUNCE_MIN_INTERVAL_S - (now - last)))
+            log.warning("announcements rejected: node=%s too_frequent", node_id)
+            return _err(
+                429, "rate_limited", **{"Retry-After": str(wait), "Cache-Control": "no-store"}
+            )
+        last_announce_poll[node_id] = now
+        texts = await brain.claim_announcements(node_id=node_id)
+        items: list[dict[str, Any]] = []
+        for text in texts:
+            minted = await tts.mint(text, node=node_id) if tts.enabled else None
+            items.append({"text": text, "audio_url": f"audio/{minted[0]}.mp3" if minted else None})
+        if items:
+            log.info(
+                "announcements: node=%s count=%d with_audio=%d",
+                node_id,
+                len(items),
+                sum(1 for i in items if i["audio_url"]),
+            )
+        return JSONResponse({"announcements": items}, headers={"Cache-Control": "no-store"})
 
     # ---- Firmware updates (task 13) ----
 
