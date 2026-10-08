@@ -314,3 +314,19 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - TASK 15: `tasks/15-claim-code-display.md` written — `vc_caption` formats "CLAIM CODE XXXX-XXXX" (20 chars), truncated to "CLAIM CODE EZ.." with no scroll. Fix: scroll long captions and/or reformat; full code must be legible. Deliver via OTA (task 13) or USB; verify on real display. Issue #13 created (Status/Summary board update BLOCKED: Studio gh token lacks project scope — needs parent/main-agent via GitHub connector).
 - Task 15 dispatched to Studio: `claude -p "/implement tasks/15-claim-code-display.md" --dangerously-skip-permissions` (~15:05 CDT). Fleet: only mac-daddy31337 valid. 30-min vigilance armed.
 - TRACK 2 (wake word): investigation running separately — recommendation to follow, no implementation until Kevin picks a direction.
+
+## 2026-10-08 ~15:15 CDT — Task 16 (node conversation memory) prepped, awaiting task 15
+- Kevin approved node conversation memory (~15:10 CDT): (1) working transcript, (2) session summaries, (3) shared long-term memory, + voice room assignment ("you're in the office").
+- `tasks/16-node-conversation-memory.md` written: Parts 1+2+4 (transcript, session, room assignment) IMPLEMENT; Part 3 (shared long-term memory) SPEC ONLY.
+- `docs/node-memory-integration.md` spec written by coordinator: backend proposes candidates to `~/memory/node-candidates.jsonl`, Vesper disposes (reviews/curates). Never direct-writes to curated memory. Open questions for Kevin: aggressiveness, room attribution, cross-node.
+- Issue #14 created (board #11 Status/Summary BLOCKED: gh token lacks project scope — needs main agent).
+- HELD: task 15 (claim-code display) still running on Studio — one task per host. Dispatch task 16 only after 15 lands.
+- Note: node homelink-c86320 moved to room "office" (was placeholder living-room). Plans: likely moving to master bedroom; MULTIPLE nodes planned, each with independent room identity.
+
+## 2026-10-08 ~15:20 CDT — Task 15 (claim-code display) GREEN, merged, 1.0.1 OTA
+- Merged 82c9e41, main pushed (a4dd2a0). Fix: caption now `CODE XXXX-XXXX` (14 chars, fits 16-char line); other claim messages shortened (`VESPER OFFLINE`, `CHECK SERVER URL`, `SERVER ERROR`, `GETTING NEW CODE`, `GETTING A CODE`). Claim protocol unchanged. Turn-error messages (e.g. `CAN'T REACH VESPER`) still long — out of scope, noted.
+- Review: GPT-5 one medium (docs list old messages); Fable non-blocking. Firmware tests pass, device build green (2,035,712 B).
+- Firmware 1.0.1 published OTA 15:14. Board installs on next check (boot / ~6h / `>ota.check` via serial); rollback to 1.0.0 on health-check failure.
+- NOT verified on real display yet: board is claimed so no code shows; re-verification needs unclaim → photo → re-claim. Left for Kevin (reboot to get 1.0.1, then decide).
+- Issue #13 -> Done pending board update (gh scope blocked — needs main agent).
+- Task 16 dispatched to Studio (~15:20 CDT) now that the host is free. 30-min vigilance armed.
