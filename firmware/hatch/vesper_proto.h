@@ -120,8 +120,10 @@ bool vp_turn_headers(const char *token, const char *node_id, char auth_buf[VP_AU
 bool vp_valid_token(const char *token);
 bool vp_valid_node_id(const char *node_id);
 
-/* The 44-byte streaming WAV header (RIFF and data sizes 0xFFFFFFFF), 16 kHz
- * mono PCM16 by default: the same bytes as muse_hatch_wav_header(). */
+/* The 44-byte streaming WAV header (RIFF and data sizes 0xFFFFFFFF), mono
+ * PCM16 at `rate`: the same bytes as the stock muse_hatch_wav_header()
+ * (muse_chat_text.c), which the firmware uses; this copy is for the host
+ * tests and the live-turn harness, which don't link the SDK. */
 void vp_wav_header(uint8_t h[VP_WAV_HEADER], uint32_t rate);
 
 /* ---- Responses before the stream ---- */

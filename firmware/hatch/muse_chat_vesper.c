@@ -462,7 +462,7 @@ static void turn_begin(uint32_t gen)
         return;
     }
     vp_turn_init(&s_turn.sse, &s_turn.base, &CBS, NULL);
-    vp_wav_header(s_turn.note, MIC_RATE);
+    muse_hatch_wav_header(s_turn.note, MIC_RATE);   /* the stock helper (muse_chat_text.c) */
     s_turn.note_len = VP_WAV_HEADER;
     s_turn.staged_from = 0;
     if (!http_open(-1)) {
@@ -714,6 +714,7 @@ static void check_turn(void)
 static void probe(void)
 {
     if (!muse_hatch_configured() || !muse_wifi_connected()) {
+        report_result(MUSE_HATCH_UNTESTED, "");
         return;
     }
     char url[VP_URL_MAX];

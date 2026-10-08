@@ -137,7 +137,7 @@ index d56a90a3f9baaac54793ac3809a0a4298369eea4..f54c39c0a3afa030430791587e05968c
      }
      portENTER_CRITICAL(&s_lock);
 diff --git a/esp32/components/muse/muse_settings.c b/esp32/components/muse/muse_settings.c
-index df957673fc3558dbf96c2addd0b0e6fbeeb87b8e..b2332f19acaeab5ce59200a6c59f5d68f41cfed7 100644
+index df957673fc3558dbf96c2addd0b0e6fbeeb87b8e..d7fdebb0d134c0a5cec4fd2e9b29a2ab44e8de9e 100644
 --- a/esp32/components/muse/muse_settings.c
 +++ b/esp32/components/muse/muse_settings.c
 @@ -29,7 +29,12 @@
@@ -180,7 +180,18 @@ index df957673fc3558dbf96c2addd0b0e6fbeeb87b8e..b2332f19acaeab5ce59200a6c59f5d68
      return ESP_OK;
  }
  
-@@ -287,7 +294,7 @@ esp_err_t muse_settings_set_hatch_token(const char *token, bool append)
+@@ -260,6 +267,10 @@ void muse_settings_set_wifi(const char *ssid, const char *pass)
+ 
+ void muse_settings_set_hatch_host(const char *host)
+ {
++    if (host && strlen(host) > MUSE_HOST_MAX) {
++        ESP_LOGW(TAG, "server URL too long (max %d characters); not saved", MUSE_HOST_MAX);
++        return;   /* a cut URL could point somewhere else */
++    }
+     LOCKED({
+         strlcpy(s.host, host && host[0] ? host : DEFAULT_HOST, sizeof(s.host));
+         save_str("host", s.host);
+@@ -287,7 +298,7 @@ esp_err_t muse_settings_set_hatch_token(const char *token, bool append)
          } else {
              memcpy(s.token + have, token, add);
              s.token[have + add] = '\0';
@@ -190,7 +201,7 @@ index df957673fc3558dbf96c2addd0b0e6fbeeb87b8e..b2332f19acaeab5ce59200a6c59f5d68
      });
      if (err == ESP_OK) {
 diff --git a/esp32/components/muse/muse_settings.h b/esp32/components/muse/muse_settings.h
-index 705a5cb2846285403937265a6548c18afa3a694f..69863d6f9f2919859fe25464fe1960f2949dcb71 100644
+index 705a5cb2846285403937265a6548c18afa3a694f..9d3e68099ff6f2bf3655b8c99fa617a9068bb27b 100644
 --- a/esp32/components/muse/muse_settings.h
 +++ b/esp32/components/muse/muse_settings.h
 @@ -30,7 +30,7 @@
@@ -198,7 +209,7 @@ index 705a5cb2846285403937265a6548c18afa3a694f..69863d6f9f2919859fe25464fe1960f2
  #define MUSE_SSID_MAX 32
  #define MUSE_PASS_MAX 64
 -#define MUSE_HOST_MAX 63
-+#define MUSE_HOST_MAX 127     /* Vesper: the server base URL, not just a host name */
++#define MUSE_HOST_MAX 63      /* Vesper: the server base URL (63 fits peggy and 6PN URLs) */
  #define MUSE_VM_MAX 63
  #define MUSE_TOKEN_MAX 1023
  
