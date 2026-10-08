@@ -393,7 +393,7 @@ static void draw_shadow(float cx, float y, float half_w)
     for (int dy = -1; dy <= 1; dy++) {
         float hw = half_w * (dy == 0 ? 1.0f : 0.72f);
         for (int x = iround(cx - hw); x <= iround(cx + hw); x++) {
-            if (s_fb[(iy + dy) * W + x] != C_BG) {
+            if ((unsigned)x >= W || (unsigned)(iy + dy) >= H || s_fb[(iy + dy) * W + x] != C_BG) {
                 continue;
             }
             if (dy == 0 || bayer(x, iy + dy) < 8) {
@@ -861,7 +861,7 @@ static void draw_waves(float cx, float cy, float body_a, float level, float t)
 
 static void draw_thought_dots(float x, float y, float t)
 {
-    int active = (int)(t * 2.5f) % 4;
+    int active = (int)fmodf(t * 2.5f, 4.0f);
     for (int i = 0; i < 3; i++) {
         int dx = iround(x + (float)i * 3.5f), dy = iround(y - (float)i * 3.5f);
         bool on = active > i;
@@ -895,7 +895,7 @@ static int s_size;
 
 void muse_pixel_set_size(int px_size)
 {
-    s_size = px_size < MAP_MAX ? px_size : MAP_MAX;
+    s_size = px_size < 0 ? 0 : px_size < MAP_MAX ? px_size : MAP_MAX;
     bool grid = s_size >= 3 * W;
     for (int i = 0; i < s_size; i++) {
         int cell = i * W / s_size;
@@ -906,6 +906,10 @@ void muse_pixel_set_size(int px_size)
 
 void muse_pixel_scale(uint16_t *dst, int stride_px, int x0, int x1, int y0, int y1)
 {
+    /* Callers pass in-range strips; refuse anything else rather than read past s_map. */
+    if (!dst || x0 < 0 || y0 < 0 || x1 < x0 || y1 < y0 || x1 >= s_size || y1 >= s_size) {
+        return;
+    }
     int n = x1 - x0 + 1;
     const uint8_t *xmap = &s_map[x0];
     const uint16_t *prev = NULL;
@@ -946,13 +950,16 @@ void muse_pixel_render(const muse_pose_t *p)
         }
         s_dir_init = true;
     }
+    if (!isfinite(p->t) || !isfinite(p->mode_t)) {
+        return; /* keep the last frame rather than drive geometry from garbage */
+    }
     float dt = s_eyes.last_t > 0 ? clampf(p->t - s_eyes.last_t, 0, 0.2f) : 0.04f;
     s_eyes.last_t = p->t;
 
     muse_mode_t mode = p->mode;
     float fade = mode == MUSE_MODE_OFF ? clampf(1.0f - p->mode_t / 1.3f, 0, 1) : 1.0f;
-    float happy = mode == MUSE_MODE_ERROR ? 0.0f : p->happy;
-    float level = clampf(p->level, 0, 1);
+    float happy = mode == MUSE_MODE_ERROR || !(p->happy > 0) ? 0.0f : clampf(p->happy, 0, 1);
+    float level = !(p->level > 0) ? 0.0f : clampf(p->level, 0, 1);
     float t = p->t;
 
     update_palette(&SCHEMES[(unsigned)mode < MUSE_MODE_COUNT ? mode : MUSE_MODE_IDLE], dt);
