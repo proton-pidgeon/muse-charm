@@ -61,6 +61,8 @@ log = logging.getLogger("vesper_node.candidates")
 EXPLICIT = "explicit"
 HEURISTIC = "heuristic"
 PENDING = "pending"
+# The node has no voice ID: who spoke is never verified (spec §5 "or clearly marked").
+SPEAKER_UNVERIFIED = "unverified"
 MAX_TEXT_CHARS = 300  # per side (user_text, vesper_reply)
 MAX_HEURISTIC_WORDS = 30  # a heuristic sentence longer than this is "ambiguous"
 MAX_UTTERANCE_WORDS = 80  # a rambling utterance never yields a heuristic candidate
@@ -76,6 +78,7 @@ CANDIDATE_KEYS = (
     "reason",
     "status",
     "dedupe_key",
+    "speaker",
 )
 
 
@@ -480,7 +483,8 @@ def _now_iso() -> str:
 def build_candidate(
     sig: Significance, *, node_id: str, room: str | None, now: Callable[[], str] = _now_iso
 ) -> dict[str, Any]:
-    """The queue line (spec §2 schema, plus ``id`` so Vesper's decisions can refer to it)."""
+    """The queue line: spec §2 schema, plus ``id`` (so Vesper's decisions can refer to it) and
+    ``speaker: "unverified"`` (the node cannot tell who spoke; spec §5 "clearly marked")."""
     return {
         "id": secrets.token_hex(8),
         "ts": now(),
@@ -492,6 +496,7 @@ def build_candidate(
         "reason": sig.reason,
         "status": PENDING,
         "dedupe_key": dedupe_key(sig.core),
+        "speaker": SPEAKER_UNVERIFIED,
     }
 
 

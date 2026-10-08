@@ -316,6 +316,7 @@ def test_queue_schema_mode_and_parent(tmp_path) -> None:
         "reason": "user said 'remember that'",
         "status": "pending",
         "dedupe_key": dedupe_key("I like my coffee black"),
+        "speaker": "unverified",
     }
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
@@ -490,6 +491,7 @@ async def test_turn_with_remember_stages_one_candidate(mkapp, stt, brain, tmp_pa
     assert line["node_id"] == NODE_ID and line["room"] == ROOM
     assert line["user_text"] == "Remember that I like my coffee black"
     assert line["vesper_reply"] == "Got it, black coffee." and line["status"] == "pending"
+    assert line["speaker"] == "unverified"
     assert len(brain.texts) == 1  # the memory path never called the brain
 
 
