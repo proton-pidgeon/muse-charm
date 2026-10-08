@@ -240,3 +240,16 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - HUMAN GATE (documented in task file): agent cannot hear the speaker — Kevin's listen check: hold talk, say "what is two plus two", release, expect Vesper's voice in ~5-8 s with captions. Board still flashed + provisioned; needs com.vesper.node (:8796) + socat (:8797) up.
 - Issue #8 -> Done. Board #11 corrected.
 - Task 08 (B2 registry) dispatched to Studio: claude -p "/implement tasks/08-node-registry.md" (background proc_b161201eced9). ravenz-node still revoked — Studio only.
+
+## 2026-10-08 ~10:28 CDT — Task 08 dispatch saga (tailnet flap + orphan)
+- First dispatch of task 08 (~10:14) hit a tailnet flap: SSH transport died (exit 255, "Timeout, server 100.71.203.103 not responding") AFTER the remote `claude -p` had already launched (PID 68127, 10:13). The implement survived orphaned; the dispatch exec wrongly reported failure.
+- Re-dispatch (~10:27, PID 70832) created a DUPLICATE. 70832 exited on its own within a minute; single implement remains: PID 68127, working directly in /Users/k3v/builds/muse-charm/muse-charm (not a worktree). Adopted.
+- Lesson: an SSH-timeout dispatch is NOT proof the remote command didn't start — always check `ps` on the host before re-dispatching.
+- Watcher armed on PID 68127 (60-min rule: check at ~50 min elapsed).
+- Note: another implement (PID 67870, tasks/15a+b+d-openjev) is running on the Studio from a different track — not ours, left alone.
+
+## 2026-10-08 ~10:33 CDT — Task 08 (B2 registry) GREEN + merged; task 11 dispatched
+- Task 08 merged to main (cb114b9 + 07f2b13): node registry + claim flow + per-node credentials, review-gated. Branch cleaned up.
+- Issue #6 -> Done ("🟢 Registry + claim flow merged, review-gated (B2)"). Board #11 now: Done = A1, A2, B3, B1, B2, F1, F2; In Progress = F3; Todo = F4, B4(HELD).
+- Task 11 (F3 claim flow on device) dispatched to Studio: claude -p "/implement tasks/11-firmware-claim-flow.md" (background). Single valid host remains mac-daddy31337.
+- Remaining: 11 -> 13 -> 12(HELD for Kevin's deploy approval).
