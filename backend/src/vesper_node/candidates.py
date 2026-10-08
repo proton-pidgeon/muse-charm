@@ -320,6 +320,8 @@ _DATE_ANCHOR = (
     rf"next\s+(?:week|month|year|{_WEEKDAY}|{_MONTH})|this\s+(?:coming\s+)?{_WEEKDAY}|"
     rf"tomorrow|in\s+{_MONTH}|{_MONTH}\s+{_ORDINAL}|{_WEEKDAY})"
 )
+# An optional clock time before the date: "at 3", "at 3pm", "at 10:30 a.m." (bounded).
+_TIME_PRELUDE = r"(?:at\s+\d{1,2}(?::\d{2})?\s?(?:am|pm|a\.m\.|p\.m\.)?\s+)?"
 # A question folded into the same sentence ("I like my coffee black what's the time").
 _QUESTION_INSIDE = re.compile(
     r"\b(?:what|what's|whats|who|who's|when|where|where's|why|how|how's|which|whose|"
@@ -384,10 +386,10 @@ _HEURISTICS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     ),
     (
         re.compile(
-            r"^(?:i|we)\s+(?:have|'ve\s+got|have\s+got)\s+(?:a|an|my|our)\s+"
+            r"^(?:i|we)(?:\s+have\s+got|\s+have|'ve\s+got)\s+(?:a|an|my|our)\s+"
             r"(?:[a-z'-]+\s+){0,2}(?:appointment|meeting|flight|interview|reservation|"
             r"surgery|checkup|check-up|party|wedding)\s+"
-            rf"(?P<obj>{_DATE_ANCHOR}\b.*)$",
+            rf"{_TIME_PRELUDE}(?P<obj>{_DATE_ANCHOR}\b.*)$",
             re.IGNORECASE,
         ),
         "upcoming event",

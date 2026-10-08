@@ -143,6 +143,10 @@ HEURISTIC_CASES = [
     "I have a meeting on Friday",
     "I have a job interview March 3rd",
     "We have a reservation tomorrow",
+    "I have a meeting at 3 on Friday",
+    "I've got a dentist appointment at 9am next Tuesday",
+    "I have a flight at 6 on March 3rd",
+    "We have a reservation at 7:30 pm tomorrow",
     "My shoe size is 11",
 ]
 
@@ -229,7 +233,9 @@ NEVER_CASES = [
     "just kidding, I love broccoli",
     # undated events: no date anchor
     "I have a meeting at 3",
-    "I have a meeting at 3 on Friday",
+    "I have a meeting at 3pm",
+    "I have a meeting at 3 tonight",
+    "I've got a dentist appointment at 9am",
     "I have a meeting tonight",
     "I have a meeting in the office",
     "I have a dentist appointment on my calendar",
