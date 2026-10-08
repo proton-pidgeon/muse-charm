@@ -267,6 +267,9 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
    exchanges are cleared.
    **Voice room assignment (task 16):** a whole utterance like "you're in the office", "this
    is the kitchen", "call this the study" or "this room is the den" never reaches the brain.
+   Free-form names need a naming marker ("this room is called X", "… the X", "call this room
+   Kevin's lab"); without one the name must end in a room noun, so "this room is cold" or
+   "set the room to 70 degrees" go to the brain as ordinary turns.
    The backend sets the registry room and replies "Got it — this is the office now." through
    the normal `message_*` events + TTS. An unusable name gets a short spoken refusal and the
    room is unchanged. Incidental mentions ("is the office light on") go to the brain as usual.

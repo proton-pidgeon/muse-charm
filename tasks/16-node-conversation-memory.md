@@ -80,11 +80,18 @@
   summary safely.)
 - **Voice room assignment:** `backend/src/vesper_node/roomcmd.py`. Whole-utterance regexes
   only (leading fillers like "hey Vesper," / "okay" stripped; a trailing "?" never fires).
-  Phrasings that say *room* ("this room is (called) the X", "call this room X", "set your room
-  to X", "your room is X") accept any name; ordinary-English phrasings ("you're in the X",
-  "this is the X", "call this the X") fire only when the name ends in a room noun (office,
-  kitchen, study, den, bedroom, …), so "you're in the way" / "this is the best day" never
-  match. Max 3 words; apostrophes dropped, hyphens to spaces, lower-cased, then `valid_room`.
+  Open-vocabulary names (anything `valid_room` accepts) only behind an unambiguous naming
+  marker: "this room is (now) called X", "this room is (now) the X", "call this room the X",
+  "call this room Kevin's lab" (possessive), "set your/the/this room to the X", "your room is
+  (now) the X". Everything else — the ordinary-English phrasings ("you're in the X", "this is
+  the X", "call this the X") and the marker-less *room* phrasings ("this room is X", "call
+  this room X", "set the room to X", "your room is X") — fires only when the name ends in a
+  room noun (office, kitchen, study, den, bedroom, workshop, …), so "this room is cold", "set
+  the room to seventy", "call this room service", "you're in the way" never match (review
+  finding, fixed). Numbers/measurements ("70 degrees", "72") and names ending in a
+  state/thermostat word ("dark", "a mess", "the worst", "cool") are rejected even behind a
+  marker and go to the brain. Max 3 words; apostrophes dropped, hyphens to spaces,
+  lower-cased, then `valid_room`.
   On a match the registry is updated and "Got it — this is the <room> now." is spoken via the
   normal `message_*` events + TTS, with no brain call. **Invalid name decision:** the turn
   does not fall through to the brain; the node speaks a short refusal ("Sorry, I can't use
