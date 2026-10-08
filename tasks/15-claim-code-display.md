@@ -17,9 +17,9 @@ Pick the approach that fits the firmware's display architecture best:
 - Either is acceptable; a combination is fine. Do NOT shrink the font to illegibility to "fit" — the code must be readable at arm's length.
 
 ## Deliverables
-- [ ] Firmware fix making the full claim code legible on the 128×128 display (scroll and/or reformat)
-- [ ] Host tests covering the new behavior (extend `firmware/hatch/test/test_vesper_claim.c` and/or caption-renderer tests — follow the existing test pattern)
-- [ ] Desktop/simulator verification: render the claim caption, confirm the full XXXX-XXXX is legible (screenshot/GIF as proof)
+- [x] Firmware fix making the full claim code legible on the 128×128 display (scroll and/or reformat)
+- [x] Host tests covering the new behavior (extend `firmware/hatch/test/test_vesper_claim.c` and/or caption-renderer tests — follow the existing test pattern)
+- [x] Desktop/simulator verification: render the claim caption, confirm the full XXXX-XXXX is legible (screenshot/GIF as proof)
 - [ ] Deliver to the REAL AiPi Lite: use the OTA pipeline from task 13 if it supports pushing this update; otherwise USB flash. (Note: the board is currently CLAIMED and working — coordinate so the update doesn't brick its credential; if the claim state must be re-triggered for verification, re-claim afterward.)
 - [ ] On-device verification: the real display shows a fully legible claim code (device snap as proof)
 
@@ -32,3 +32,7 @@ Pick the approach that fits the firmware's display architecture best:
 ## Anti-deliverables (do NOT build in this task)
 - Wake-word / trigger-word activation — that's a separate track (design only for now)
 - Changes to the claim protocol itself (code format, expiry, backend) — display only
+
+## Implementation notes (impl/15-claim-code-display)
+
+The compact (128x128) layout draws the caption as ONE line of unscii_8 (8 px glyphs), 16 columns, long text ending in "...". Fix is option B: `vc_caption` now emits `CODE XXXX-XXXX` (14 chars) and every other claim note is <= `VC_CAPTION_COLS` (16). No scrolling patch. Proof: `firmware/hatch/snaps/` (LVGL simulator rebuilt at 128x128 with the real `muse_ui.c`; the simulator shows the stock avatar, not the Vesper one). Firmware VERSION 1.0.1.

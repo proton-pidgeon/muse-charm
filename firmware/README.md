@@ -200,7 +200,7 @@ model is task 08's (conflict C2): the shared edge bearer plus a per-node `X-Node
 - **Start.** `POST <host>/claim/start` with the bearer and `X-Node-Id: homelink-<mac>`
   (`identity_node_id()`; `identity.c` is unchanged).
 - **The code.** The `claim_code` (`XXXX-XXXX`) is shown:
-  - as the idle caption (`CLAIM CODE K7M2-QX9P`, re-shown every 5 s while idle, since other
+  - as the idle caption (`CODE K7M2-QX9P`, re-shown every 5 s while idle, since other
     screens borrow the caption);
   - in Muse's settings as the server status;
   - over BLE.
@@ -566,7 +566,7 @@ The agents don't flash the board or open its serial port. Steps for Kevin (or Ve
    - `vesper_ble: BLE host started`, then `advertising as MuseGadget-XXXXXX (claim in progress)`;
    - `vesper_chat: claim: code 1 ready (HTTP 200 in N ms); shown on the screen and over BLE`.
 
-   The screen shows `CLAIM CODE XXXX-XXXX`, as does Settings > server status. Optional: in a
+   The screen shows `CODE XXXX-XXXX`, as does Settings > server status. Optional: in a
    BLE scanner (e.g. nRF Connect), `MuseGadget-XXXXXX` has service `76657370-…-000000000001`.
    Reading its characteristic gives `{"state":"pending","code":"XXXX-XXXX"}`.
 4. **Approve it** on the Studio, with the code from the screen and the board's room:
@@ -590,7 +590,7 @@ The agents don't flash the board or open its serial port. Steps for Kevin (or Ve
    `0`. The code itself only ever appears on the screen and over BLE, never in the log.
 8. Optional, the refusal path: `vesper-node nodes revoke homelink-c86320`, then press. Expect:
    - `turn: HTTP 403 node_unauthorized`, then `the node credential was refused; claiming again`;
-   - `NODE NOT CLAIMED`, then a new `CLAIM CODE` on the screen.
+   - `NODE NOT CLAIMED`, then a new `CODE` on the screen.
 
    Approve it as in step 4.
 
@@ -746,7 +746,7 @@ for Kevin, once this branch is merged:
    (`idf.py -B build-muse-aipi -p /dev/cu.usbmodem83201 monitor`, ESP-IDF exported, in
    `~/builds/muse-charm/scratch/sdk-impl-13-fresh/esp32`) type
    `>hatch.host=https://peggy.fly.dev/vesper-node`, then `>hatch.test` (expect `HTTP 200`).
-3. **Claim it** (task 11's gate): read `CLAIM CODE XXXX-XXXX` off the screen, then
+3. **Claim it** (task 11's gate): read `CODE XXXX-XXXX` off the screen, then
    `cd backend && uv run --locked vesper-node claim XXXX-XXXX --room <room>`. Within ~10 s the
    log shows `claim: claimed, room <room>` and then
    `update check: up to date (HTTP 204 ...; running 1.0.0)`.
