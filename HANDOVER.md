@@ -336,3 +336,19 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Review: GPT-5.5 HIGH + Fable HIGH (room false positives) → fixed on the fable rung; delta approve. Design-gap notes for Kevin appended to `docs/node-memory-integration.md` (brain no-tools summarize path; expose /ask `history`). `docs/node-wire-protocol.md` Q4 amended: transcripts ARE now persisted on the Studio (never logged) — Kevin may want to re-read that wording.
 - Redeployed via launchd (bootstrap I/O error 5 on first try = bootout race; retry OK). Live stub-client: "Tell me more about that" followed up on Moby Dick; "You're in the kitchen" updated the registry with spoken confirmation. Temp node `homelink-stubclient` removed (its stale history entry in node-memory.json is harmless).
 - HUMAN GATE: real-board PTT test on homelink-c86320. Cosmetic follow-up: `turn done` log line shows the pre-assignment room on a room-assignment turn.
+
+## 2026-10-08 ~15:45 CDT — Task 16 (node conversation memory) GREEN, merged, LIVE
+- Merged to main (ba5a957), backend redeployed via launchd (one restart hiccup, then healthy, healthz 200).
+- Working transcript: last 15 exchanges/node in `~/.config/vesper-voice/node-memory.json`, survives restarts, prepended to /ask under the 1000-char limit. Live test: "Who wrote Moby Dick?" -> "Tell me more about that" carried on about Moby Dick. Transcript text never logged (verified).
+- Session awareness: 15-min idle -> extractive summary (NOT brain-based — GPT-5.5/Fable blocked brain summarization: /ask always has home-control tools on, old text like "turn off the kitchen lights" could re-fire). Summary seeds later turns until next gap.
+- Voice room assignment: "you're in the office" / "this room is called the lab" -> set_room + voice confirm, no brain call. 70+ negative cases tested ("this room is cold", "set the room to 70", "is the office light on" go to brain). Fable caught "this room is cold" -> "cold" false positive pre-merge; fixed.
+- Part 4 (shared long-term memory): NOT built per task; implementer added notes to docs/node-memory-integration.md for Kevin.
+- Review: 364 tests pass on main. First version blocked by GPT-5.5 (brain-summary), re-run a tier up, approved.
+- ATTENTION (for Kevin): docs/node-wire-protocol.md now says words are stored on the Studio — REPLACES the earlier "transcripts are never persisted" decision. Needs his re-read. Also: AI summary wants a tools-off brain endpoint (design note, his call). Minor: room-change turn log shows old room.
+- Issue #14 -> Done pending board update (gh scope blocked).
+- HUMAN GATE: Kevin PTT test on the real board (homelink-c86320) to confirm context works live.
+
+## 2026-10-08 ~15:50 CDT — Task 17 dispatched (coordinator)
+- Kevin approved Part 4 (shared long-term memory) 15:46. Task file `tasks/17-node-longterm-memory.md` written from `docs/node-memory-integration.md`; issue #15 created, board #11 → Todo.
+- Dispatched `claude -p "/implement tasks/17-node-longterm-memory.md"` on Studio (pid 49868). Gates: green build + adversarial review. Safety: memory path must never trigger actions.
+- (correction 15:55) First dispatch failed: `claude` not on bare PATH. Re-dispatched with full PATH (pid 50602).
