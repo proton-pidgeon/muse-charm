@@ -9,8 +9,8 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `apply-sdk.sh <SDK_DIR>` | Idempotent. Deletes the Meta transport, applies `sdk-patches/*.patch`, installs `hatch/` and the avatar, and checks that `main/voice.c` is unchanged |
 | `sdk-patches/delete.txt` | Files the patch set removes from the SDK |
 | `sdk-patches/000N-*.patch` | Edits to tracked SDK files (`git apply` format against `b1a3822`) |
-| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), installed as `<SDK>/esp32/components/muse/vesper/` |
-| `hatch/test/` | Host tests of the protocol core, and a live-turn harness |
+| `hatch/` | The Vesper `muse_hatch_*` backend (task 09) and its reply speech (task 10), installed as `<SDK>/esp32/components/muse/vesper/` |
+| `hatch/test/` | Host tests of the protocol core and the speech helpers, and a live-turn harness |
 | `avatar/` | The Vesper owl avatar (task 04) |
 | `Makefile` | `make -C firmware test` and `make -C firmware live-turn` (host only, no ESP-IDF) |
 
@@ -24,7 +24,8 @@ stays a re-clonable upstream at `b1a3822`, and `apply-sdk.sh` rebuilds the Vespe
 2. **Edits to tracked SDK files** are a short `git apply` series (`sdk-patches/0001-0003`):
    - build and Kconfig without `CONFIG_GADGET_SDK_TOKEN`;
    - `main/app.c` cut down to Wi-Fi, OTA validation, identity and the Muse glue;
-   - the backend selection at `components/muse/CMakeLists.txt`;
+   - the backend selection at `components/muse/CMakeLists.txt` (since task 10 it also builds
+     `vesper/vesper_audio.c`: one line, the only SDK-side change task 10 needed);
    - the `muse_settings` repurpose.
 3. **New Vesper-owned sources** are whole files in `hatch/`, copied into an SDK path that the
    SDK's `.gitignore` already ignores (`components/muse/vesper/`, like `components/muse/avatar/`).
@@ -95,15 +96,17 @@ patch set's checks.
   - HTTP status verdicts.
 
   The firmware and the host tests compile the same file.
+- **`vesper_audio.{c,h}`** (task 10) is the reply-speech arithmetic, pure C as well: the
+  22.05 kHz -> 16 kHz resampler, the MP3 buffer accounting of the decode path, and the caption
+  timing numbers. See *Speech* below.
 - **`muse_chat_vesper.c`** is the ESP-IDF backend behind the `muse_hatch_*` seam
   (`turn_begin/audio/end/cancel/event/read/caption`, plus status, test and the MP3 self-test). It
   uses `esp_http_client`:
   - It opens a chunked POST at the press and streams the note while the button is held.
   - It parses the SSE reply on the hatch task.
   - Text deltas become captions.
-  - `message_done.audio_url` goes to `vesper_tts_slot_offer()`, **the task-10 TTS slot**. Task 09
-    ships only a weak default that declines, so replies stay captions paced over silence, as in
-    stock firmware.
+  - `message_done.audio_url` goes to `vesper_tts_slot_offer()`, **the TTS slot**, which task 10
+    filled: the reply is spoken (see *Speech* below). Task 09 shipped a weak default that declined.
 
   Logs carry lengths, statuses and timings only. They never carry the token, transcript or reply
   text.
@@ -141,6 +144,67 @@ You can also join Wi-Fi from Muse's on-screen Wi-Fi settings, or with the
 `CONFIG_HOMEHUB_WIFI_SSID` dev override. A setup reset from the Muse menu forgets the saved Wi-Fi
 and the node token and keeps the server URL.
 
+### Speech (task 10, F2)
+
+Stock firmware never spoke gadget replies: `start_tts()` in `muse_chat_session.cpp:1503-1517` was
+an empty slot that paced captions over silence (conflict C4). The Vesper backend fills it.
+
+- **Where.** `on_message_done` hands `audio_url` (already resolved by `vp_resolve_audio_url`, so on
+  the configured server) to `vesper_tts_slot_offer()`, which only records it: no I/O inside the
+  SSE parser. `start_showing()` (the stock `start_tts()`) takes the finished messages in order. A
+  message with a URL is fetched: `GET` with the turn's `Authorization` and `X-Node-Id`,
+  `Accept: audio/mpeg`, no redirects, 5 s connect/headers timeout. It needs `200` and
+  `audio/mpeg`, and at most 2 MiB. Anything else falls back to silent pacing. The URL is never
+  logged, because its id is a capability.
+- **Decode.** This is the stock `tts_data`/`decode` path, on the hatch task (32 KB PSRAM stack;
+  minimp3 needs ~16 KB). The body is read in 20 ms polls into a 192 KiB PSRAM buffer. Reading is
+  flow-controlled: it reads only while the buffer has room, so a long reply never drops bytes.
+  minimp3 decodes while the 2 s reply buffer (`s_out`) has room for a frame's output. Until the
+  download ends it holds back the last 1,445 bytes, because minimp3 drops a frame it can't see
+  past. Stereo is downmixed.
+- **Resampling.** The backend sends `mp3_22050_32`, and the speaker runs at 16 kHz. Stock code
+  resampled with linear interpolation. Going down from 22.05 kHz, that folds 8-11 kHz back into
+  the speech: a 10 kHz tone comes out at 6 kHz only 4.6 dB down (host test). `vesper_audio.c`
+  uses a polyphase windowed-sinc filter instead:
+  - 48 taps, Blackman window, 128 phases, cutoff at 0.45 of the lower rate;
+  - exact rational time base, so it never drifts;
+  - unity DC gain in every phase;
+  - its 24-sample lag is flushed at the end of each message.
+
+  Measured: 1 kHz passes at gain 1.0000 with 63 dB SNR, and the 10 kHz alias is at -78 dB. The
+  table takes 25 ms to build on the S3 the first time, and is kept for later messages at the same
+  rate. The bench MP3 self-test uses the same resampler.
+- **Playback.** Decoded PCM goes into the same `s_out` stream buffer that `muse_voice.c`
+  (unchanged) reads with `muse_hatch_turn_read()` and writes to the 16 kHz speaker at the
+  configured volume. `voice.c` and `voice_player.c` are untouched. The AIPI doesn't compile
+  `voice.c`.
+- **Caption sync.** `muse_hatch_turn_caption(played)` pages the message by `played - pcm_start`
+  over `pcm_frames`, which comes from the audio:
+  - while decoding: the samples out so far, plus the bytes left at the measured bytes per sample.
+    It doesn't use the frame header's bitrate: the backend's first frame claims 56 kbps in a file
+    that averages 32;
+  - once drained: exact.
+
+  Captions are no longer paced over silence when there is speech. One log line per page turn
+  (`caption: message M page P at X s of Y s (char C of N)`) is the sync evidence. In sync,
+  `C/N` follows `X/Y`.
+- **Failures never wedge the turn.** In every case the turn still ends:
+  - no URL, a refused URL, connect/HTTP/type failure, or no decodable frame: the stock pacing
+    (16 chars/s plus a 2 s hold);
+  - download cut short or stalled (10 s without bytes): what arrived is spoken, then the rest of
+    the caption is paced over silence at the speech's own rate;
+  - the 180 s turn cap still applies.
+- **Cancel.** A new press (`turn_cancel`) bumps the generation and drains `s_out`. Then
+  `CMD_CANCEL`, a failure, a settings change or the time cap reaches `turn_finish()`, which calls
+  `tts_stop()` and closes the GET. Every write to `s_out` checks the generation first, so a
+  cancelled turn's audio can't reach the speaker after the drain. The one blocking step is the
+  GET's connect plus headers (5 s at worst; ~25 ms on the LAN). A cancel during it is handled
+  right after, and the mic backlog (8 s) covers a press made meanwhile.
+- **Memory.** The MP3 buffer (192 KiB), one decoded frame and its 16 kHz output are allocated
+  once at start, all in PSRAM. The decoder and resampler state (~20 KB) are PSRAM `.bss`. No turn
+  path allocates, so no error path has anything to free. If the start-up allocation fails,
+  replies are captions only.
+
 ### Host checks (no board)
 
 - `make -C firmware test` runs the protocol core's unit tests under ASan and UBSan, with
@@ -155,6 +219,16 @@ and the node token and keeps the server URL.
   - UTF-8 truncation;
   - JSON escapes;
   - HTTP verdicts.
+
+  The same target runs the speech helpers' tests (`hatch/test/test_vesper_audio.c`):
+  - resampler length and drift: 3 s in gives 3 s out, split anywhere or fed per MP3 frame;
+  - 1, 3 and 5 kHz pass on time and at level;
+  - 9 and 10 kHz are filtered, compared against the stock linear interpolator;
+  - DC exact, saturation, and 8/24/44.1 kHz input;
+  - the coefficient table (unity gain, accumulator headroom);
+  - MP3 buffer hold, flow control and drain, with a stand-in decoder that, like minimp3, needs
+    the next header;
+  - the caption-length estimate and the TTS Content-Type check.
 - `make -C firmware live-turn` runs one real turn against the running node backend
   (`http://[::1]:8796` by default, `VESPER_NODE_URL` to override). It uses the same
   `vesper_proto.c` and libcurl in place of `esp_http_client`:
@@ -207,6 +281,55 @@ The physical board is not flashed by the agents. Steps for Kevin:
      `X-Node-Id homelink-<mac>`.
 
    To roll back to stock, flash a build from the untouched SDK clone.
+
+### On-device check (task 10: spoken replies)
+
+Done by the task-10 agent on 2026-10-08, with the coordinator's authorisation, on the AiPi at
+`/dev/cu.usbmodem83201` (Wi-Fi already provisioned). Build from `sdk-impl-10`, flashed with
+`board.sh flash aipi`. `hatch.host=http://192.168.5.16:8797` (the socat stopgap) and
+`hatch.token` were set over serial, piped from `node.env` and never printed. `>hatch.test` gave
+`server check: HTTP 200`. The question was "what is two plus two", played from the Studio's
+speakers into the board's mic. The full logs are in `/tmp` (not committed). The serial log of
+the first turn:
+
+```
+vesper_chat: voice note: 4.04s, 129324 bytes
+vesper_chat: turn: HTTP 200
+vesper_chat: transcript: 21 chars
+vesper_chat: message 0 done (21 chars, with speech)
+vesper_chat: tts: message 0: GET HTTP 200, Content-Length 5347, audio/mpeg, headers in 23 ms
+vesper_chat: tts: fetched 5347 of 5347 bytes in 26 ms
+vesper_chat: tts: reply audio 22050 Hz, 1 ch, 56 kbps -> 16000 Hz (resampler ready in 26 ms)
+muse_voice: reply audio after 4.21s
+vesper_chat: tts: message 0: 50 MP3 frames at 22050 Hz -> 20898 samples at 16000 Hz (1.31 s of speech); first audio 57 ms after the GET
+vesper_chat: turn done: 1 message(s) in 8.1s
+vesper_chat: caption: message 0 page 2 at 0.95 s of 1.31 s (char 15 of 21)
+muse_voice: muse reply: 1.31s of audio, 5.52s total
+```
+
+- The speech ran 1.31 s, and 20,898 samples at 16 kHz is 1.306 s. That matches 50 MPEG-2
+  layer III frames x 576 samples at 22,050 Hz, which is 1.306 s, so the resampling keeps the
+  duration.
+- `muse_voice` played 1.31 s of it to the speaker.
+- The caption turned its page at 0.95 of 1.31 s (72%) at character 15 of 21 (71%).
+
+A second turn (the reply "Four.": 2,944 bytes, 27 frames, 11,285 samples, 0.71 s played) was
+just as clean. The PSRAM heartbeat was back at its idle level afterwards (5,223 KiB free), so
+nothing leaks.
+
+**Barge-in.** A press 0.2 s into a 1.31 s reply logged `reply interrupted`, then
+`turn cancelled`. Nothing more of the old reply played. The 0.14 s press was dropped as too
+short, so it never reached `/ask`.
+
+**HUMAN GATE (Kevin): hearing it.** The serial evidence shows the PCM going to the speaker. Only
+a person can confirm the sound. With the board flashed and provisioned as above (it still is):
+
+1. Make sure the backend (`com.vesper.node`) and the socat forward on `:8797` are running.
+2. Hold the talk button, say "what is two plus two", and release.
+3. Within about 5-8 s you should hear Vesper's voice say the answer from the AiPi's speaker,
+   with the caption paging along with it.
+4. If it's silent but the log shows `muse reply: X s of audio` with X > 0, check the volume in
+   Muse's settings (the speaker plays at `muse_settings_volume()`).
 
 ## Decision: the avatar is a patch set tracked in THIS repo (not an SDK fork)
 
