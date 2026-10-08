@@ -6,9 +6,11 @@
 #
 # Steps:
 #   1. delete the Meta transport (firmware/sdk-patches/delete.txt)
-#   2. apply the patch series (firmware/sdk-patches/*.patch, in order)
+#   2. apply the patch series (firmware/sdk-patches/*.patch, in order; a tree
+#      that already has the whole series is detected as such)
 #   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
-#      the protocol core, the reply-speech helpers) into
+#      the protocol core, the reply-speech helpers, the claim flow, the node
+#      credential store and the BLE host) into
 #      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
@@ -39,6 +41,27 @@ done < "$here/sdk-patches/delete.txt"
 echo "deleted: $deleted path(s)"
 
 # 2. patches
+# A later patch may edit lines an earlier one added (0004 edits 0002's app.c),
+# so "is patch N applied?" can't be asked of patch N alone once N+1 is on top.
+# First ask it of the whole series: on a scratch copy of the files it touches,
+# reverse the patches last to first. If that works, the tree is fully patched.
+series_applied() {
+    local scratch rc=0 f p
+    scratch="$(mktemp -d)"
+    for f in $(sed -n 's|^+++ b/||p' "$here"/sdk-patches/*.patch | sort -u); do
+        [ -e "$sdk/$f" ] || { rm -rf "$scratch"; return 1; }
+        mkdir -p "$scratch/$(dirname "$f")"
+        cp "$sdk/$f" "$scratch/$f"
+    done
+    for p in $(ls "$here"/sdk-patches/*.patch | sort -r); do
+        (cd "$scratch" && git apply --reverse "$p" 2>/dev/null) || { rc=1; break; }
+    done
+    rm -rf "$scratch"
+    return $rc
+}
+if series_applied; then
+    for patch in "$here"/sdk-patches/*.patch; do echo "already applied: $(basename "$patch")"; done
+else
 for patch in "$here"/sdk-patches/*.patch; do
     name="$(basename "$patch")"
     if git -C "$sdk" apply --check "$patch" 2>/dev/null; then
@@ -52,11 +75,13 @@ for patch in "$here"/sdk-patches/*.patch; do
         exit 1
     fi
 done
+fi
 
 # 3. the Vesper hatch backend
 dest="$sdk/esp32/components/muse/vesper"
 mkdir -p "$dest"
-for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h; do
+for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h \
+         vesper_claim.c vesper_claim.h vesper_cred.c vesper_cred.h vesper_ble.c vesper_ble.h; do
     if ! cmp -s "$here/hatch/$f" "$dest/$f"; then
         cp "$here/hatch/$f" "$dest/$f"
         echo "installed: components/muse/vesper/$f"

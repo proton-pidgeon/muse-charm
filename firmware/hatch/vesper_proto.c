@@ -461,6 +461,9 @@ vp_http_verdict_t vp_http_verdict(int status, const char *content_type, const ch
         msg = "VESPER IS BUSY";
     } else if (status == 401) {
         msg = "TOKEN REFUSED";
+    } else if (status == 403) {
+        /* task 08/11: node_unauthorized sends the node back to the claim flow */
+        msg = eq(error_code, "node_unauthorized") ? "NODE NOT CLAIMED" : "REQUEST REFUSED";
     } else if (status == 400) {
         msg = eq(error_code, "unsupported_protocol") ? "UPDATE THE FIRMWARE"
               : eq(error_code, "bad_node_id")         ? "BAD DEVICE ID"

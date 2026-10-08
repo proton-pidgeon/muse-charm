@@ -416,7 +416,7 @@ That is exactly the pre-task-08 status quo, limited to one node id.
 - Task 09 (F1) may amend this doc while it implements the firmware side. Record any change in
   the changelog below.
 
-## Node firmware notes (task 09)
+## Node firmware notes (tasks 09-11)
 
 How the firmware backend (`firmware/hatch/`, the third `muse_hatch_*` backend) uses v1. None
 of this changes the wire shape, so the version stays 1.
@@ -450,7 +450,8 @@ of this changes the wire shape, so the version stays 1.
   60 s with no bytes at all (pings count) ends the turn with `VESPER TIMED OUT`. The whole turn
   is capped at 180 s. A stream that ends without `done` still shows any text that arrived.
   With no text it fails as `LOST CONNECTION TO VESPER`.
-- **Captions for pre-stream errors** (`vp_http_verdict`): 401 `TOKEN REFUSED`, 400
+- **Captions for pre-stream errors** (`vp_http_verdict`): 401 `TOKEN REFUSED`, 403
+  `NODE NOT CLAIMED` (`node_unauthorized`, task 11; the node then claims again), 400
   `BAD DEVICE ID` / `UPDATE THE FIRMWARE` / `REQUEST REFUSED`, 413 `NOTE TOO LONG`, 415
   `BAD AUDIO TYPE`, 422 `COULDN'T READ THE AUDIO`, 408 `UPLOAD TOO SLOW`, 404/405
   `CHECK THE SERVER URL`, 503 (after the retry) `VESPER IS BUSY`, no response
@@ -475,6 +476,43 @@ of this changes the wire shape, so the version stays 1.
   A download cut short or stalled for 10 s plays what arrived and paces the rest of the caption.
   A `404` (expired id) is a normal fallback; the node doesn't retry. The node never logs the
   URL, only status, byte counts and timings.
+- **Claim flow (task 11).** The node side of *Claim flow* above, in `firmware/hatch/vesper_claim.c`
+  (pure C, host-tested) and `muse_chat_vesper.c`:
+  - **When.** A node with no credential in NVS `muse:node_cred` (fresh flash, setup reset,
+    serial `>claim.forget`) claims once the server URL and bearer are set and Wi-Fi is up. A
+    `403 node_unauthorized` on `/turn` or on an `/audio` GET also sends a node back to the claim flow. Its old
+    credential stays in NVS until the new one replaces it. Until it is claimed, the node
+    starts no turns. On the AIPI a press still records the note, which is sent once the node is
+    claimed.
+  - **Requests.** `/claim/start` and `/claim/poll` carry `Authorization`, `X-Node-Id`,
+    `X-Vesper-Node-Protocol: 1` and `Accept: application/json`. The poll adds `X-Claim-Secret`.
+    There is no body (`Content-Length: 0`), and redirects are never followed.
+  - **Accepted values.** The node takes `claim_code` only as exactly `XXXX-XXXX` from the claim
+    alphabet. It takes `claim_secret` and `credential` only as `vcs_`/`vnc_` plus 16-96
+    url-safe base64 characters, and `room` only as `ROOM_RE`. Anything else counts as a server
+    error, and nothing of it is kept. A credential that fails these checks is lost, since it is
+    delivered once, so the node starts over.
+  - **Timing.**
+    - It polls every 3 s and doesn't read `poll_interval`.
+    - A `404` on a poll means start over, no sooner than 5.5 s after the last start. That
+      respects the backend's 5 s restart limit.
+    - `429` waits for `Retry-After`, capped at 900 s.
+    - `503` waits for `Retry-After` if one is given, else backs off.
+    - No response or a 5xx backs off from 5 s, doubling up to 60 s. Polling keeps the secret
+      meanwhile.
+    - `401`, `400`, or `404`/`405` on start (wrong URL, or a pre-task-08 backend) waits 60 s.
+  - **Display.** The code is shown on the screen (idle caption and settings status) and in the
+    BLE claim characteristic (service `76657370-6572-4e6f-6465-000000000001`, READ/NOTIFY JSON
+    `{"state":"pending","code":"…"}`). It is never written to serial. The secret lives in RAM
+    only and is wiped when the claim ends.
+  - **After the claim.** Every `/turn` and every `/audio` GET carries
+    `X-Node-Credential: vnc_…`. There is no refresh: the stock firmware's refresh-on-401
+    (`app.c:860-935`) has no counterpart in this credential model. Its equivalent is re-claim on
+    `403 node_unauthorized`. A `401` on `/turn` is still `TOKEN REFUSED`.
+  - **Captions.** `vp_http_verdict` gives `403 node_unauthorized` the caption
+    `NODE NOT CLAIMED`, and any other `403` the caption `REQUEST REFUSED`.
+  - **NVS.** It is plaintext on the dev boards, by decision: see `firmware/README.md`, *NVS
+    encryption: decision*. A stolen credential is handled with `vesper-node nodes revoke`.
 
 ## Changelog
 
@@ -489,3 +527,7 @@ of this changes the wire shape, so the version stays 1.
   (see *Versioning*).
 - **v1, firmware notes (2026-10-08, task 10):** the TTS bullet now describes how the node fetches
   and plays the MP3. This is a clarification only: no wire change and no version bump.
+- **v1, firmware notes (2026-10-08, task 11):** added the *Claim flow (task 11)* bullet: how
+  the node runs the claim flow, which response values it accepts, its poll and backoff timing,
+  where the code is shown, and re-claim on `403` (no refresh). These are clarifications only:
+  task 08 defined the wire shape, so there is no version bump.
