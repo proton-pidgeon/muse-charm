@@ -173,3 +173,25 @@ def test_check_config_names_the_registry(files, tmp_path, monkeypatch, capsys) -
     (tmp_path / "nodes.json").write_text("{}")
     (tmp_path / "nodes.json").chmod(0o644)
     assert main(["check-config"]) == 78
+
+
+def test_memory_settings(files, tmp_path) -> None:
+    """Task 16: conversation memory file + session idle minutes (defaults and overrides)."""
+    s = load(files)
+    assert s.memory_file == str(Path("~/.config/vesper-voice/node-memory.json").expanduser())
+    assert s.session_idle_minutes == 15
+    s = load(
+        files,
+        {
+            "VESPER_NODE_MEMORY_FILE": str(tmp_path / "m.json"),
+            "VESPER_NODE_SESSION_IDLE_MINUTES": "30",
+        },
+    )
+    assert s.memory_file == str(tmp_path / "m.json") and s.session_idle_minutes == 30
+
+
+@pytest.mark.parametrize("value", ["soon", "0", "-5", "1441"])
+def test_refuses_bad_session_idle(files, value) -> None:
+    with pytest.raises(ConfigError) as e:
+        load(files, {"VESPER_NODE_SESSION_IDLE_MINUTES": value})
+    assert "VESPER_NODE_SESSION_IDLE_MINUTES" in str(e.value)

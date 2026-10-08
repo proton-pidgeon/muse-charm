@@ -68,3 +68,22 @@ Implementation note: significance is judged in the node backend (it owns the tra
 1. **Aggressiveness:** start with explicit-only ("remember this"), or include the heuristic from day one? (Recommendation: explicit-only first.)
 2. **Room attribution:** "Kevin said in the office…" vs. plain "Kevin said…"? (Recommendation: include room when it's a household/location fact, drop it otherwise.)
 3. **Cross-node:** when there are multiple nodes, should a memory from the office node be distinguishable from the bedroom node? (Recommendation: yes, via the existing `node_id`/`room` fields — already in the candidate format.)
+
+---
+
+## Design-gap notes for Kevin (task 16 implementation, not a design change)
+
+Two things the node side ran into while building Parts 1–3; neither changes the design above,
+both need a brain-side change before the node can use them.
+
+- **An LLM-quality session summary needs a brain-side no-tools path.** The brain's `/ask`
+  always runs the home-control tool loop (`lobe_toggle`, `lobe_set`, …) and ignores the
+  channel, so a summarization request whose body is old utterances ("turn off the kitchen
+  lights") can act on them, and a node-side timeout only cancels the node's wait while the
+  brain keeps running. Task 16 therefore uses an extractive summary (Kevin's last questions +
+  the start of Vesper's last reply). An `/ask` option that disables tools, or a dedicated
+  `/summarize` route, would let the node switch to an LLM summary with no node-side risk.
+- **`history` is not exposed on `/ask`.** The brain's `answer()` already accepts `history` as
+  role messages (user/assistant), but `/ask` does not pass it through. Exposing it would let
+  the node send prior turns as real messages instead of text prepended to the utterance, and
+  would free the 640-char history budget inside the 1000-char `text` limit.

@@ -15,6 +15,10 @@ Resolution order for every key: process environment, then the **node** env file
   ``~/.config/vesper-voice/nodes.json``.
 * ``VESPER_NODE_FIRMWARE_DIR`` (optional) moves the published node firmware (task 13) from its
   default ``~/.config/vesper-voice/firmware``.
+* ``VESPER_NODE_MEMORY_FILE`` (optional) moves the per-node conversation memory (task 16)
+  from its default ``~/.config/vesper-voice/node-memory.json``.
+* ``VESPER_NODE_SESSION_IDLE_MINUTES`` (optional, default 15, 1-1440) is the idle gap after
+  which a node's transcript is compressed into a session summary (task 16).
 * Provider and brain keys (``ELEVENLABS_API_KEY``, ``DEEPGRAM_API_KEY``,
   ``VESPER_STT_PROVIDER``, ``VESPER_PHONE_TTS_VOICE_ID``, ``VESPER_BRAIN_URL``,
   ``VESPER_BRAIN_TOKEN``) come from the existing voice env file.
@@ -45,6 +49,10 @@ REGISTRY_FILE_VAR = "VESPER_NODE_REGISTRY_FILE"
 DEFAULT_REGISTRY_FILE = Path("~/.config/vesper-voice/nodes.json")
 FIRMWARE_DIR_VAR = "VESPER_NODE_FIRMWARE_DIR"
 DEFAULT_FIRMWARE_DIR = Path("~/.config/vesper-voice/firmware")
+MEMORY_FILE_VAR = "VESPER_NODE_MEMORY_FILE"
+DEFAULT_MEMORY_FILE = Path("~/.config/vesper-voice/node-memory.json")
+SESSION_IDLE_VAR = "VESPER_NODE_SESSION_IDLE_MINUTES"
+DEFAULT_SESSION_IDLE_MINUTES = 15
 
 DEFAULT_HOST = "::"  # same precedent as the live brain: 6PN + loopback
 DEFAULT_PORT = 8796
@@ -134,6 +142,18 @@ def _derived_brain_url(host: str | None, port: str | None) -> str:
     return f"http://{bracketed}:{port or DEFAULT_BRAIN_PORT}"
 
 
+def _idle_minutes(value: str | None) -> int:
+    if value is None:
+        return DEFAULT_SESSION_IDLE_MINUTES
+    try:
+        minutes = int(value)
+    except ValueError:
+        raise ConfigError(f"{SESSION_IDLE_VAR} must be an integer") from None
+    if not 1 <= minutes <= 1440:
+        raise ConfigError(f"{SESSION_IDLE_VAR} must be between 1 and 1440")
+    return minutes
+
+
 def _port(value: str | None) -> int:
     if value is None:
         return DEFAULT_PORT
@@ -165,6 +185,10 @@ class Settings:
     # Published node firmware (task 13). None in hand-built test settings: no firmware routes
     # then serve anything (manifest 204) unless create_app is given a store.
     firmware_dir: str | None = None
+    # Per-node conversation memory (task 16). None in hand-built test settings: create_app
+    # then keeps memory in RAM only, unless it is given a store.
+    memory_file: str | None = None
+    session_idle_minutes: int = DEFAULT_SESSION_IDLE_MINUTES
     admin_token: str | None = None
     env_files: tuple[str, ...] = field(default=())
 
@@ -260,6 +284,8 @@ def load_settings(
         tts_off=(get("VESPER_NODE_TTS") or "").lower() in TTS_OFF_VALUES,
         registry_file=str(Path(get(REGISTRY_FILE_VAR) or DEFAULT_REGISTRY_FILE).expanduser()),
         firmware_dir=str(Path(get(FIRMWARE_DIR_VAR) or DEFAULT_FIRMWARE_DIR).expanduser()),
+        memory_file=str(Path(get(MEMORY_FILE_VAR) or DEFAULT_MEMORY_FILE).expanduser()),
+        session_idle_minutes=_idle_minutes(get(SESSION_IDLE_VAR)),
         admin_token=admin_token,
         env_files=(str(node_path), str(voice_path)),
     )
