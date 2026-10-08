@@ -12,6 +12,7 @@ import pytest
 
 from vesper_node.app import create_app
 from vesper_node.config import Settings
+from vesper_node.registry import Registry
 from vesper_node.wav import wav_header
 
 NODE_TOKEN = "node-token-" + "n" * 40
@@ -20,6 +21,8 @@ ELEVEN_KEY = "sk_" + "e" * 48
 DEEPGRAM_KEY = "d" * 40
 VOICE_ID = "VoiceId12345678"
 NODE_ID = "homelink-aabbccddeeff"
+NODE_CREDENTIAL = "vnc_" + "c" * 43
+ROOM = "kitchen"
 TRANSCRIPT = "Hello Vesper what is two plus two"
 REPLY = "Two plus two is four, my favourite owl fact."
 FAKE_MP3 = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\xff\xfb\x90\x64" + b"\x00" * 600
@@ -30,8 +33,13 @@ def make_note(seconds: float = 1.0, *, streaming: bool = True) -> bytes:
     return wav_header(len(pcm), streaming=streaming) + pcm
 
 
-def auth(token: str = NODE_TOKEN) -> dict[str, str]:
+def bearer(token: str = NODE_TOKEN) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def auth(token: str = NODE_TOKEN) -> dict[str, str]:
+    """Shared bearer + the registered test node's id and credential (task 08)."""
+    return {**bearer(token), "X-Node-Id": NODE_ID, "X-Node-Credential": NODE_CREDENTIAL}
 
 
 def turn_headers(**extra: str) -> dict[str, str]:
@@ -115,8 +123,17 @@ def providers() -> Providers:
 
 
 @pytest.fixture
-def build(providers: Providers):
+def registry(tmp_path) -> Registry:
+    """A temp registry with NODE_ID claimed (room ROOM, credential NODE_CREDENTIAL)."""
+    reg = Registry(tmp_path / "cfg" / "nodes.json")
+    reg.add_node(NODE_ID, ROOM, credential=NODE_CREDENTIAL)
+    return reg
+
+
+@pytest.fixture
+def build(providers: Providers, registry: Registry):
     def _build(settings: Settings | None = None, **kwargs: Any):
+        kwargs.setdefault("registry", registry)
         return create_app(
             settings or make_settings(),
             stt_transport=httpx.MockTransport(providers.stt),

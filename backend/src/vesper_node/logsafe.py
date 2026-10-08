@@ -3,6 +3,7 @@
 A slimmed mirror of ``vesper-voice/server/src/vesper_voice/logsafe.py``. Every log record
 is rewritten before it is emitted:
 
+* node credentials (``vnc_…``) and claim secrets (``vcs_…``) by shape (task 08);
 * known secret values, registered by :mod:`vesper_node.config`, are masked verbatim;
 * credential fields (``Authorization: …``, ``xi-api-key: …``, ``token=…``,
   ``Bearer …``/``Token …``) and ElevenLabs/Deepgram key shapes are masked;
@@ -26,10 +27,12 @@ _KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bsk_[A-Fa-f0-9]{32,}\b"),  # ElevenLabs
     re.compile(r"\b[A-Fa-f0-9]{40}\b"),  # Deepgram
     re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"\bv(?:nc|cs)_[A-Za-z0-9_\-]{20,}"),  # node credential / claim secret (task 08)
 )
 _FIELD_PATTERN = re.compile(
     r"""(?ix)
-    (?P<name> authorization | xi-api-key | x-api-key | api[_-]?key | secret | token | password )
+    (?P<name> authorization | xi-api-key | x-api-key | api[_-]?key | secret | token | password
+               | credential | x-vesper-node-admin | claim[_-]?code )
     (?P<sep>["']?\s*[:=]\s*["']?)
     (?:(?:bearer|token|basic)\s+)?
     (?P<value>[^\s"',;&}]+)

@@ -2,6 +2,8 @@
 
     vesper-node                  # serve (run by launchd as com.vesper.node)
     vesper-node check-config     # report settings by name (never values); exit 78 if unusable
+    vesper-node claim CODE --room ROOM            # approve a node's on-screen claim code
+    vesper-node nodes list|add|set-room|allow-shared-token|revoke|remove ...   (see cli.py)
 
 The wire protocol is ``docs/node-wire-protocol.md`` (v1). Backend routes (Peggy strips the
 ``/vesper-node`` prefix before proxying):
@@ -10,12 +12,17 @@ The wire protocol is ``docs/node-wire-protocol.md`` (v1). Backend routes (Peggy 
   stream.
 * ``GET /audio/{id}.mp3``: the reply MP3 (capability id, 10-minute TTL, bearer-gated too).
 * ``GET /healthz``: unauthenticated ``{"ok": true}``.
+* ``POST /claim/start``, ``POST /claim/poll``: the node side of the claim flow (task 08).
+* ``POST /admin/claim``: approve a claim code (only if ``VESPER_NODE_ADMIN_TOKEN`` is set).
 
 Auth is checked before the body is read, as in ``vesper-voice/.../brain_service.py``.
 :class:`BearerAuth` is a pure-ASGI middleware that checks ``Authorization: Bearer
 <VESPER_NODE_TOKEN>`` with ``hmac.compare_digest`` on every route except ``GET /healthz``,
 and answers 401 **without ever calling** ``receive``. The body is never consumed on a bad
-token.
+token. The same middleware then does the per-route second factor, still before the body
+(task 08, conflict C2): ``/turn`` and ``/audio`` need a registered ``X-Node-Id`` plus its
+``X-Node-Credential`` (403 ``node_unauthorized`` otherwise); ``/admin/*`` needs
+``X-Vesper-Node-Admin: <VESPER_NODE_ADMIN_TOKEN>``.
 
 Transcripts are transient (Kevin's Q4 decision). Transcript and reply text go to the node
 over the SSE stream only. They are never logged or persisted. Logs carry the node id,
@@ -41,8 +48,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import logsafe
-from .brain import MAX_TEXT_CHARS, AskError, BrainClient
+from .brain import MAX_TEXT_CHARS, AskError, BrainClient, with_room_context
 from .config import ConfigError, Settings, load_settings
+from .registry import NODE_ID_RE, POLL_INTERVAL_S, ClaimError, NodeAuth, Registry, RegistryError
 from .stt import STT, STTError
 from .tts import NodeTTS
 from .wav import MIN_STT_MS, BadAudio, parse_note
@@ -59,10 +67,14 @@ MAX_CONCURRENT_TURNS = 2
 BUSY_RETRY_AFTER_S = 2
 SSE_PREAMBLE_BYTES = 2048  # Peggy HTTP/2 edge buffers tiny streams (memory: SSE priming)
 SSE_PING_S = 10.0
-NODE_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 AUDIO_NAME_RE = re.compile(r"^([A-Za-z0-9_-]{22,64})\.mp3$")
 WAV_TYPES = frozenset({"audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave"})
 OPEN_ROUTES = frozenset({("GET", "/healthz"), ("HEAD", "/healthz")})
+CLAIM_ROUTES = frozenset({("POST", "/claim/start"), ("POST", "/claim/poll")})
+ADMIN_PREFIX = "/admin/"
+ADMIN_HEADER = b"x-vesper-node-admin"
+MAX_ADMIN_BODY_BYTES = 1024
+NODE_AUTH_SCOPE_KEY = "vesper_node.auth"
 
 # Fixed, safe captions for SSE `error` events (never derived from user input).
 ERROR_MESSAGES = {
@@ -91,15 +103,36 @@ def authorized(header: str | None, expected: str) -> bool:
     return hmac.compare_digest(presented.strip().encode(), expected.encode())
 
 
+def _single_header(scope: Scope, name: bytes) -> tuple[str | None, bool]:
+    """``(value, ok)``: ok is False when the header is repeated (ambiguous -> refuse)."""
+    values = [v for k, v in scope.get("headers", []) if k.lower() == name]
+    if len(values) > 1:
+        return None, False
+    return (values[0].decode("latin-1") if values else None), True
+
+
+def _is_node_route(method: str, path: str) -> bool:
+    return (method == "POST" and path == "/turn") or (
+        method in {"GET", "HEAD"} and path.startswith("/audio/")
+    )
+
+
 class BearerAuth:
     """Pure-ASGI auth gate. A rejected request's ``receive`` is never called (body unread).
 
-    It also stamps ``X-Vesper-Node-Protocol: 1`` on every HTTP response.
+    Layer 1 (every route but ``/healthz``): the shared ``VESPER_NODE_TOKEN`` bearer -> 401.
+    Layer 2 (task 08): ``/turn`` + ``/audio``: registered node + credential -> 403;
+    ``/claim/*``: well-formed ``X-Node-Id``; ``/admin/*``: admin token -> 403 (404 if the
+    admin route is disabled). It also stamps ``X-Vesper-Node-Protocol: 1`` on every response.
     """
 
-    def __init__(self, app: ASGIApp, token: str) -> None:
+    def __init__(
+        self, app: ASGIApp, token: str, registry: Registry, admin_token: str | None = None
+    ) -> None:
         self.app = app
         self._token = token
+        self.registry = registry
+        self._admin_token = admin_token
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -113,28 +146,67 @@ class BearerAuth:
                 message["headers"] = headers
             await send(message)
 
-        if (scope.get("method", ""), scope.get("path", "")) in OPEN_ROUTES:
-            await self.app(scope, receive, stamped_send)
-            return
-        values = [v for k, v in scope.get("headers", []) if k.lower() == b"authorization"]
-        header = values[0].decode("latin-1") if len(values) == 1 else None
-        if not authorized(header, self._token):
-            log.warning("rejected: route=%s missing or invalid bearer token", _route_label(scope))
-            body = json.dumps({"error": "unauthorized"}).encode()
+        async def reject(status: int, code: str, *extra: tuple[bytes, bytes]) -> None:
+            body = json.dumps({"error": code}).encode()
             await stamped_send(
                 {
                     "type": "http.response.start",
-                    "status": 401,
+                    "status": status,
                     "headers": [
                         (b"content-type", b"application/json"),
                         (b"content-length", str(len(body)).encode()),
-                        (b"www-authenticate", b"Bearer"),
+                        *extra,
                         (b"connection", b"close"),  # the unread body must not poison keep-alive
                     ],
                 }
             )
             await stamped_send({"type": "http.response.body", "body": body})
+
+        method, path = scope.get("method", ""), scope.get("path", "")
+        if (method, path) in OPEN_ROUTES:
+            await self.app(scope, receive, stamped_send)
             return
+        header, _ = _single_header(scope, b"authorization")
+        if not authorized(header, self._token):
+            log.warning("rejected: route=%s missing or invalid bearer token", _route_label(scope))
+            await reject(401, "unauthorized", (b"www-authenticate", b"Bearer"))
+            return
+
+        if path.startswith(ADMIN_PREFIX):
+            if not self._admin_token:
+                await reject(404, "not_found")
+                return
+            presented, ok = _single_header(scope, ADMIN_HEADER)
+            if (
+                not ok
+                or not presented
+                or not hmac.compare_digest(presented.strip().encode(), self._admin_token.encode())
+            ):
+                log.warning("rejected: route=admin missing or invalid admin token")
+                await reject(403, "forbidden")
+                return
+        elif _is_node_route(method, path) or (method, path) in CLAIM_ROUTES:
+            node_id, ok = _single_header(scope, b"x-node-id")
+            if not ok or node_id is None or not NODE_ID_RE.fullmatch(node_id):
+                await reject(400, "bad_node_id")
+                return
+            if _is_node_route(method, path):
+                credential, ok = _single_header(scope, b"x-node-credential")
+                result = (
+                    self.registry.authenticate(node_id, (credential or "").strip() or None)
+                    if ok
+                    else NodeAuth(False, node_id, reason="bad_credential")
+                )
+                if not result.ok:
+                    log.warning(
+                        "rejected: route=%s node=%s reason=%s",
+                        _route_label(scope),
+                        node_id,
+                        result.reason,
+                    )
+                    await reject(403, "node_unauthorized")
+                    return
+                scope[NODE_AUTH_SCOPE_KEY] = result
         await self.app(scope, receive, stamped_send)
 
 
@@ -145,6 +217,10 @@ def _route_label(scope: Scope) -> str:
         return "turn"
     if path.startswith("/audio/"):
         return "audio"
+    if path.startswith("/claim/"):
+        return "claim"
+    if path.startswith(ADMIN_PREFIX):
+        return "admin"
     return "other"
 
 
@@ -188,8 +264,13 @@ def create_app(
     max_body_bytes: int = MAX_BODY_BYTES,
     sse_preamble_bytes: int = SSE_PREAMBLE_BYTES,
     sse_ping_s: float = SSE_PING_S,
-) -> ASGIApp:
+    registry: Registry | None = None,
+) -> BearerAuth:
     """Build the ASGI app (FastAPI wrapped in :class:`BearerAuth`). Transports are for tests."""
+    if registry is None:
+        if not settings.registry_file:
+            raise ValueError("create_app needs a registry (settings.registry_file or registry=)")
+        registry = Registry(settings.registry_file)
     stt = STT(
         chain=[(p, settings.stt_key(p) or "") for p in settings.stt_chain()],
         language=settings.stt_language,
@@ -246,7 +327,8 @@ def create_app(
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
 
-    async def run_turn(note: Any, node_id: str, upload_s: float, q: asyncio.Queue) -> None:
+    async def run_turn(note: Any, node: NodeAuth, upload_s: float, q: asyncio.Queue) -> None:
+        node_id = node.node_id
         started = clock()
         timing: dict[str, Any] = {
             "upload_ms": _ms(upload_s),
@@ -283,12 +365,13 @@ def create_app(
                 fail("empty_transcript")
                 return
             emit("transcript", {"text": heard.text})  # to the node only; never logged
-            if len(heard.text) > MAX_TEXT_CHARS:
+            ask_text = with_room_context(heard.text, node.room)  # task 08: registry room
+            if len(ask_text) > MAX_TEXT_CHARS:
                 fail("transcript_too_long")
                 return
             t = clock()
             try:
-                reply = await brain.ask(heard.text, node_id=node_id)
+                reply = await brain.ask(ask_text, node_id=node_id)
             except AskError:
                 timing["ask_ms"] = _ms(clock() - t)
                 fail("ask_failed")
@@ -321,9 +404,11 @@ def create_app(
             q.put_nowait(None)
             release()
             log.info(
-                "turn done: node=%s ok=%s code=%s audio_ms=%d upload_ms=%s stt_ms=%s "
-                "ask_ms=%s tts_ms=%s total_ms=%s provider=%s",
+                "turn done: node=%s room=%s auth=%s ok=%s code=%s audio_ms=%d upload_ms=%s "
+                "stt_ms=%s ask_ms=%s tts_ms=%s total_ms=%s provider=%s",
                 node_id,
+                node.room,
+                node.via,
                 ok,
                 code or "-",
                 note.duration_ms,
@@ -350,13 +435,12 @@ def create_app(
 
     @app.post("/turn")
     async def turn(request: Request) -> Response:
-        # (auth already passed in BearerAuth, before any body byte was read)
+        # (bearer + node credential passed in BearerAuth, before any body byte was read)
+        node: NodeAuth = request.scope[NODE_AUTH_SCOPE_KEY]
         proto = request.headers.get("x-vesper-node-protocol")
         if proto is not None and proto.strip() != PROTOCOL_VERSION:
             return _err(400, "unsupported_protocol")
-        node_id = request.headers.get("x-node-id", "")
-        if not NODE_ID_RE.fullmatch(node_id):
-            return _err(400, "bad_node_id")
+        node_id = node.node_id
         ctype = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if ctype not in WAV_TYPES:
             return _err(415, "unsupported_media_type")
@@ -399,7 +483,7 @@ def create_app(
         q: asyncio.Queue = asyncio.Queue()
         # The pipeline runs as its own task, so it finishes (and releases its slot) even if
         # the node disconnects mid-stream. The brain does not cancel on disconnect either.
-        task = asyncio.create_task(run_turn(note, node_id, upload_s, q), name="node-turn")
+        task = asyncio.create_task(run_turn(note, node, upload_s, q), name="node-turn")
         tasks.add(task)
         task.add_done_callback(tasks.discard)
         return StreamingResponse(
@@ -422,7 +506,110 @@ def create_app(
             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
         )
 
-    return BearerAuth(app, settings.node_token)
+    def claim_error(e: ClaimError) -> JSONResponse:
+        status = {
+            "rate_limited": 429,
+            "too_many_pending": 429,
+            "claim_locked": 429,
+            "claim_not_found": 404,
+            "bad_room": 400,
+        }.get(e.code, 400)
+        headers = {"Cache-Control": "no-store"}
+        if e.retry_after:
+            headers["Retry-After"] = str(e.retry_after)
+        return _err(status, e.code, **headers)
+
+    def registry_down(e: RegistryError) -> JSONResponse:
+        log.error("node registry unusable: %s", e)
+        return _err(503, "registry_unavailable")
+
+    @app.post("/claim/start")
+    async def claim_start(request: Request) -> Response:
+        # Shared bearer + well-formed X-Node-Id were checked in BearerAuth. No body is read.
+        node_id = request.headers["x-node-id"]
+        try:
+            started = await asyncio.to_thread(registry.start_claim, node_id)
+        except ClaimError as e:
+            log.warning("claim start refused: node=%s reason=%s", node_id, e.code)
+            return claim_error(e)
+        except RegistryError as e:
+            return registry_down(e)
+        log.info("claim started: node=%s", node_id)
+        return JSONResponse(
+            {
+                "status": "pending",
+                "claim_code": started.code,
+                "claim_secret": started.secret,
+                "expires_in": started.expires_in,
+                "poll_interval": POLL_INTERVAL_S,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/claim/poll")
+    async def claim_poll(request: Request) -> Response:
+        node_id = request.headers["x-node-id"]
+        presented = request.headers.getlist("x-claim-secret")
+        secret = presented[0].strip() if len(presented) == 1 else ""
+        try:
+            got = await asyncio.to_thread(registry.poll, node_id, secret)
+        except ClaimError as e:
+            log.info("claim poll: node=%s result=%s", node_id, e.code)
+            return claim_error(e)
+        except RegistryError as e:
+            return registry_down(e)
+        if got.status == "pending":
+            return JSONResponse(
+                {
+                    "status": "pending",
+                    "expires_in": got.expires_in,
+                    "poll_interval": POLL_INTERVAL_S,
+                },
+                status_code=202,
+                headers={"Cache-Control": "no-store"},
+            )
+        return JSONResponse(
+            {
+                "status": "claimed",
+                "node_id": node_id,
+                "room": got.room,
+                "credential": got.credential,
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post("/admin/claim")
+    async def admin_claim(request: Request) -> Response:
+        # Shared bearer AND admin token were checked in BearerAuth, before this body read.
+        declared = request.headers.get("content-length")
+        if declared is not None and (
+            not declared.isdigit() or len(declared) > 6 or int(declared) > MAX_ADMIN_BODY_BYTES
+        ):
+            return _err(413, "too_large")
+        try:
+            raw = await asyncio.wait_for(_read_bounded(request, MAX_ADMIN_BODY_BYTES), timeout=10.0)
+            body = json.loads(raw)
+        except _TooLarge:
+            return _err(413, "too_large")
+        except Exception:  # noqa: BLE001 - timeout, disconnect or bad JSON
+            return _err(400, "bad_request")
+        code = body.get("code") if isinstance(body, dict) else None
+        room = body.get("room") if isinstance(body, dict) else None
+        if not isinstance(code, str) or not isinstance(room, str) or len(code) > 32:
+            return _err(400, "bad_request")
+        try:
+            node_id, replaces = await asyncio.to_thread(registry.approve, code, room.strip())
+        except ClaimError as e:
+            log.warning("admin claim refused: reason=%s", e.code)
+            return claim_error(e)
+        except RegistryError as e:
+            return registry_down(e)
+        return JSONResponse(
+            {"node_id": node_id, "room": room.strip(), "replaces_access": replaces},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    return BearerAuth(app, settings.node_token, registry, settings.admin_token)
 
 
 def check_config() -> int:
@@ -436,6 +623,17 @@ def check_config() -> int:
     print(f"brain: {s.ask_url}")
     print(f"stt chain: {', '.join(s.stt_chain())} (primary {s.stt_provider})")
     print("tts: " + ("on" if s.tts_enabled else ("off (VESPER_NODE_TTS)" if s.tts_off else "off")))
+    print(f"node registry: {s.registry_file} (VESPER_NODE_REGISTRY_FILE)")
+    try:
+        count = Registry(s.registry_file or "").check()
+    except RegistryError as e:
+        print(f"config error: {e}", file=sys.stderr)
+        return EX_CONFIG
+    print(f"  registered nodes: {count}")
+    print(
+        "admin claim route: "
+        + ("on (VESPER_NODE_ADMIN_TOKEN)" if s.admin_token else "off (CLI approval only)")
+    )
     print("ok: VESPER_NODE_TOKEN and VESPER_BRAIN_TOKEN present")
     return 0
 
@@ -444,8 +642,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args[:1] == ["check-config"]:
         return check_config()
+    if args[:1] in (["claim"], ["nodes"]):
+        from .cli import registry_cli
+
+        return registry_cli(args)
     if args and args[:1] != ["serve"]:
-        print("usage: vesper-node [serve|check-config]", file=sys.stderr)
+        print("usage: vesper-node [serve|check-config|claim|nodes]", file=sys.stderr)
         return EX_USAGE
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     logsafe.install_log_redaction()
@@ -454,6 +656,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         return EX_CONFIG
+    try:
+        nodes = Registry(settings.registry_file or "").check()
+    except RegistryError as e:
+        print(f"config error: {e}", file=sys.stderr)
+        return EX_CONFIG
+    log.info("node registry: %d node(s)", nodes)
     app = create_app(settings)
 
     import uvicorn

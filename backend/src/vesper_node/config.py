@@ -9,6 +9,10 @@ Resolution order for every key: process environment, then the **node** env file
 **voice** env file (``~/.config/vesper-voice/env``, override ``VESPER_VOICE_ENV_FILE``).
 
 * ``VESPER_NODE_TOKEN`` (>= 32 chars) normally lives in ``node.env``.
+* ``VESPER_NODE_ADMIN_TOKEN`` (optional, >= 32 chars, distinct from the other tokens) enables
+  the ``POST /admin/claim`` route (task 08). Without it, claims are approved by the local CLI only.
+* ``VESPER_NODE_REGISTRY_FILE`` (optional) moves the node registry from its default
+  ``~/.config/vesper-voice/nodes.json``.
 * Provider and brain keys (``ELEVENLABS_API_KEY``, ``DEEPGRAM_API_KEY``,
   ``VESPER_STT_PROVIDER``, ``VESPER_PHONE_TTS_VOICE_ID``, ``VESPER_BRAIN_URL``,
   ``VESPER_BRAIN_TOKEN``) come from the existing voice env file.
@@ -35,6 +39,8 @@ NODE_ENV_FILE_VAR = "VESPER_NODE_ENV_FILE"
 VOICE_ENV_FILE_VAR = "VESPER_VOICE_ENV_FILE"
 DEFAULT_NODE_ENV_FILE = Path("~/.config/vesper-voice/node.env")
 DEFAULT_VOICE_ENV_FILE = Path("~/.config/vesper-voice/env")
+REGISTRY_FILE_VAR = "VESPER_NODE_REGISTRY_FILE"
+DEFAULT_REGISTRY_FILE = Path("~/.config/vesper-voice/nodes.json")
 
 DEFAULT_HOST = "::"  # same precedent as the live brain: 6PN + loopback
 DEFAULT_PORT = 8796
@@ -149,6 +155,10 @@ class Settings:
     deepgram_api_key: str | None = None
     tts_voice_id: str | None = None
     tts_off: bool = False
+    # Node registry (task 08). None only in hand-built test settings: create_app then needs
+    # an explicit registry, so a test can never touch the real ~/.config file.
+    registry_file: str | None = None
+    admin_token: str | None = None
     env_files: tuple[str, ...] = field(default=())
 
     @property
@@ -216,6 +226,12 @@ def load_settings(
     voice_id = get("VESPER_PHONE_TTS_VOICE_ID")
     if voice_id is not None and not TTS_VOICE_ID_RE.fullmatch(voice_id):
         problems.append("VESPER_PHONE_TTS_VOICE_ID (must be 8-64 letters/digits)")
+    admin_token = get("VESPER_NODE_ADMIN_TOKEN")
+    if admin_token is not None:
+        if len(admin_token) < MIN_NODE_TOKEN_LEN:
+            problems.append(f"VESPER_NODE_ADMIN_TOKEN (must be >= {MIN_NODE_TOKEN_LEN} chars)")
+        elif admin_token in (node_token, brain_token):
+            problems.append("VESPER_NODE_ADMIN_TOKEN (must differ from the other tokens)")
     if problems:
         raise ConfigError("invalid configuration: " + ", ".join(problems))
 
@@ -235,6 +251,8 @@ def load_settings(
         deepgram_api_key=get("DEEPGRAM_API_KEY"),
         tts_voice_id=voice_id,
         tts_off=(get("VESPER_NODE_TTS") or "").lower() in TTS_OFF_VALUES,
+        registry_file=str(Path(get(REGISTRY_FILE_VAR) or DEFAULT_REGISTRY_FILE).expanduser()),
+        admin_token=admin_token,
         env_files=(str(node_path), str(voice_path)),
     )
     for secret in (
@@ -242,6 +260,7 @@ def load_settings(
         settings.brain_token,
         settings.elevenlabs_api_key,
         settings.deepgram_api_key,
+        settings.admin_token,
     ):
         logsafe.register_secret(secret)
     if not settings.stt_chain():
@@ -249,3 +268,13 @@ def load_settings(
             "invalid configuration: no STT key (ELEVENLABS_API_KEY or DEEPGRAM_API_KEY)"
         )
     return settings
+
+
+def resolve_registry_path(environ: Mapping[str, str] | None = None) -> Path:
+    """Registry path for the CLI: process env, then ``node.env``. Needs no tokens."""
+    env = dict(os.environ if environ is None else environ)
+    node_path = Path(env.get(NODE_ENV_FILE_VAR) or DEFAULT_NODE_ENV_FILE).expanduser()
+    value = _clean(env.get(REGISTRY_FILE_VAR)) or _clean(
+        load_env_file(node_path).get(REGISTRY_FILE_VAR)
+    )
+    return Path(value or DEFAULT_REGISTRY_FILE).expanduser()

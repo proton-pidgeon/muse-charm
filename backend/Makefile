@@ -6,7 +6,8 @@ export PATH := /opt/homebrew/bin:$(HOME)/.local/bin:$(PATH)
 UV ?= uv
 BUILD := .build
 KEY_VARS := ELEVENLABS_API_KEY ELEVEN_API_KEY DEEPGRAM_API_KEY VESPER_BRAIN_TOKEN VESPER_NODE_TOKEN \
-            VESPER_BRAIN_URL VESPER_PHONE_TTS_VOICE_ID VESPER_STT_PROVIDER VESPER_NODE_TTS
+            VESPER_BRAIN_URL VESPER_PHONE_TTS_VOICE_ID VESPER_STT_PROVIDER VESPER_NODE_TTS \
+            VESPER_NODE_ADMIN_TOKEN VESPER_NODE_REGISTRY_FILE
 # keyless: strip every provider key and point both env files at nothing
 KEYLESS := env $(foreach v,$(KEY_VARS),-u $(v)) VESPER_NODE_ENV_FILE=/nonexistent/node.env \
            VESPER_VOICE_ENV_FILE=/nonexistent/env
