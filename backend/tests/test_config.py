@@ -136,3 +136,40 @@ def test_loaded_secrets_are_redacted_in_logs(files, caplog) -> None:
     assert logsafe.redact_text("Authorization: Bearer abcdefghijkl") == (
         "Authorization: [REDACTED]"
     )
+
+
+def test_registry_and_admin_token_settings(files, tmp_path) -> None:
+    s = load(files)
+    assert s.registry_file == str(Path("~/.config/vesper-voice/nodes.json").expanduser())
+    assert s.admin_token is None
+    s = load(
+        files,
+        {
+            "VESPER_NODE_REGISTRY_FILE": str(tmp_path / "r.json"),
+            "VESPER_NODE_ADMIN_TOKEN": "a" * 40,
+        },
+    )
+    assert s.registry_file == str(tmp_path / "r.json") and s.admin_token == "a" * 40
+
+
+@pytest.mark.parametrize("admin", ["short-admin", TOKEN, BRAIN])
+def test_refuses_weak_or_reused_admin_token(files, admin) -> None:
+    with pytest.raises(ConfigError) as e:
+        load(files, {"VESPER_NODE_ADMIN_TOKEN": admin})
+    assert "VESPER_NODE_ADMIN_TOKEN" in str(e.value) and admin not in str(e.value)
+
+
+def test_check_config_names_the_registry(files, tmp_path, monkeypatch, capsys) -> None:
+    from vesper_node.app import main
+
+    node, voice = files
+    monkeypatch.setenv("VESPER_NODE_ENV_FILE", str(node))
+    monkeypatch.setenv("VESPER_VOICE_ENV_FILE", str(voice))
+    monkeypatch.setenv("VESPER_NODE_REGISTRY_FILE", str(tmp_path / "nodes.json"))
+    assert main(["check-config"]) == 0
+    out = capsys.readouterr().out
+    assert f"node registry: {tmp_path / 'nodes.json'} (VESPER_NODE_REGISTRY_FILE)" in out
+    assert "registered nodes: 0" in out and "admin claim route: off" in out
+    (tmp_path / "nodes.json").write_text("{}")
+    (tmp_path / "nodes.json").chmod(0o644)
+    assert main(["check-config"]) == 78
