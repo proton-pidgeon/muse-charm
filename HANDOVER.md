@@ -87,3 +87,20 @@
   the box), (3) Kevin pairs in Muse app > Settings > Devices > Developer mode.
   Unverified until then: how to enter download mode if esptool cannot connect
   (AIPI user buttons are GPIO42/GPIO1, not BOOT), actual serial output, voice round-trip.
+
+## 2026-10-07 ~19:55 CDT — Vesper-node build kicked off (Kevin: 'take it all the way through to completion')
+- /ingest of docs/vesper-node-architecture.md produced specs/ + tasks 04–13 (commit 9b87be9). Board #11 populated: issues #2–#11 (one per task), Status=Todo, Summary set. Issue #1 = epic.
+- Kevin's decisions fed to tasks: v1 allowlist = chat + home/room control IN, purchases/messaging/irreversible OUT; transcripts transient-only (no logging); PTT for v1; TTS = phone brain's ElevenLabs voice (VESPER_PHONE_TTS_VOICE_ID).
+- Wave 1 dispatched: task 04 (A1 avatar) on Studio; task 06 (B3 channel=node) on ravenz-node.
+- B4 (task 12, Peggy deploy) HELD for Kevin's explicit approval — build everything else first.
+
+## 2026-10-07 ~20:13 CDT — Task 04 GREEN (coordinator lost to runtime drain, work verified)
+- /implement merged impl/04: evening-star owl avatar (7f1ea58) — firmware/avatar/ with 8 mode GIFs, bench.c, install.sh. Board issue #2 → Done.
+- Task 05 (A2 on-device validation) dispatched to Studio.
+- Task 06 (B3) still running on ravenz-node.
+
+## 2026-10-07 ~20:30 CDT — Task 05 (A2): Vesper avatar FLASHED, awaiting Kevin's eyes on the LCD
+- Board was already plugged in (/dev/cu.usbmodem83201) and paired. Flashed the avatar-only build (SDK b1a3822 untouched + firmware/avatar/muse_pixel.c; ELF cf6b49a47…, built 20:08) over the 18:45 stock build. App-only flash, NVS kept: boots paired, VM connected, no panic, heap same as stock.
+- Spec correction: the AIPI canvas is 96 px (stock muse_ui.c `s_h*3/4`), so the owl renders at 1.5×, not an exact 2× to 128×128.
+- KEVIN TODO (human gate): look at the screen. Expect BOOT (owl pops up, star ignites) → IDLE (gold star, bobbing). Hold the bottom-right button → LISTENING (cyan); release → THINKING (magenta) → SPEAKING (mint) + caption reply; happy overlay if the reply triggers it. ERROR: e.g. turn Wi-Fi off/unplug the router mid-turn. OFF: long-press power/menu → power off (dusk-violet wave). Note anything wrong per mode; then task 05 can close.
+- Rollback to stock avatar: `rm ~/builds/muse-charm/scratch/muse-gadget-sdk/esp32/components/muse/avatar/muse_pixel.c`, then `tools/muse/board.sh build aipi && tools/muse/board.sh flash aipi`.
