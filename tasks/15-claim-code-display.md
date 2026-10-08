@@ -20,12 +20,16 @@ Pick the approach that fits the firmware's display architecture best:
 - [x] Firmware fix making the full claim code legible on the 128×128 display (scroll and/or reformat)
 - [x] Host tests covering the new behavior (extend `firmware/hatch/test/test_vesper_claim.c` and/or caption-renderer tests — follow the existing test pattern)
 - [x] Desktop/simulator verification: render the claim caption, confirm the full XXXX-XXXX is legible (screenshot/GIF as proof)
-- [ ] Deliver to the REAL AiPi Lite: use the OTA pipeline from task 13 if it supports pushing this update; otherwise USB flash. (Note: the board is currently CLAIMED and working — coordinate so the update doesn't brick its credential; if the claim state must be re-triggered for verification, re-claim afterward.)
+- [x] Deliver to the REAL AiPi Lite: use the OTA pipeline from task 13 if it supports pushing this update; otherwise USB flash. (Note: the board is currently CLAIMED and working — coordinate so the update doesn't brick its credential; if the claim state must be re-triggered for verification, re-claim afterward.)
+  > published 2026-10-08 15:14 CDT via OTA: `vesper-node firmware publish` 1.0.1 (2,035,712 B, sha256 000000b7…144b, from `scratch/sdk-impl-15`). The board installs it at its next check (boot, every ~6 h, or `>ota.check`); install not yet observed in the backend log.
 - [ ] On-device verification: the real display shows a fully legible claim code (device snap as proof)
+  > blocked: HUMAN GATE. No USB serial on the Studio (no `/dev/cu.usbmodem*`), and the board is claimed and in use, so the claim code isn't on screen. To verify: plug in USB, confirm `firmware 1.0.1`, re-trigger the claim (or check on the next fresh board), snap the screen, then re-claim with `vesper-node claim <code>`.
 
 ## Definition of done
-- [ ] Green build + adversarial review per the /implement gates; merged to main
+- [x] Green build + adversarial review per the /implement gates; merged to main
+  > merged 82c9e41. GPT-5 review: 1 MEDIUM (strings shared with the Settings status / docs); Fable ruled non-blocking (docs cover the untouched turn-error captions; nothing machine-parses the claim caption).
 - [ ] Firmware delivered to the real board (OTA preferred, USB acceptable)
+  > published via OTA 15:14; waiting on the board's next update check
 - [ ] Device snap proves the full XXXX-XXXX claim code is legible on the 128×128 display
 - [ ] Board still claimed and working after the update (PTT → reply, or re-claimed cleanly)
 
