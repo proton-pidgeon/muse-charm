@@ -29,10 +29,10 @@
 - [x] Device snaps in `firmware/avatar/device-snaps/` showing the new avatar on the 128×128 display
 
 ## Definition of done
-- [ ] Green build + adversarial review per the /implement gates; merged to main
-  > green gate done by the implementer (make -C firmware test, -Werror host build + bench, board.sh build aipi with the custom avatar); adversarial review and merge are the orchestrator's.
+- [x] Green build + adversarial review per the /implement gates; merged to main
+  > green gate done by the implementer (make -C firmware test, -Werror host build + bench, board.sh build aipi with the custom avatar). Review 2026-10-08: GPT-5 raised one HIGH (`muse_pixel_scale` trusts `stride_px`); Fable ruled it ADVISORY (pre-existing in the owl, unreachable from both muse_ui.c callers) and found nothing else; the guard was applied anyway (ede835e). Merged bc639c8; `make -C firmware test` green on main.
 - [x] Final firmware flashed to the REAL AiPi Lite; the 128×128 display shows the Iconic face (device snap as proof)
-  > canonical (non-bench) 1.0.0 build of `sdk-impl-13-fresh` with the Iconic avatar flashed 2026-10-08 and booted clean; snaps are from the bench build of the same tree and avatar source. If review changes the art, rebuild + reflash.
+  > canonical (non-bench) 1.0.0 build of `sdk-impl-13-fresh` with the Iconic avatar flashed 2026-10-08 and booted clean; snaps are from the bench build of the same tree and avatar source. Review didn't change the art; after merge, main was rebuilt (compile time 13:28:03, 2,035,712 B) and reflashed (`Hash of data verified`), boots clean, Wi-Fi up, no panic.
 - [ ] HUMAN GATE: Kevin sees the rendered result on the device (or a faithful snap) and approves the look — he picked the direction, he confirms the execution
   > pending: show Kevin `firmware/avatar/device-snaps/sheet.png` (or the board itself).
 
