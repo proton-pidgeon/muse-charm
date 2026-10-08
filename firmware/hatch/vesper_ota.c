@@ -275,6 +275,12 @@ void vo_sched_init(vo_sched_t *s, int64_t now_ms)
 {
     s->next_ms = now_ms + VO_FIRST_CHECK_MS;
     s->failures = 0;
+    s->probation = false;
+}
+
+void vo_sched_set_probation(vo_sched_t *s, bool probation)
+{
+    s->probation = probation;
 }
 
 bool vo_sched_due(const vo_sched_t *s, int64_t now_ms)
@@ -300,7 +306,12 @@ void vo_sched_done(vo_sched_t *s, bool ok, const char *node_id, int64_t now_ms)
 {
     if (ok) {
         s->failures = 0;
+        s->probation = false;
         s->next_ms = now_ms + VO_PERIOD_MS + vo_jitter_ms(node_id);
+        return;
+    }
+    if (s->probation) {
+        s->next_ms = now_ms + VO_PROBATION_RETRY_MS;
         return;
     }
     int64_t wait = VO_RETRY_MIN_MS;

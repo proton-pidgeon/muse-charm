@@ -608,7 +608,11 @@ only trigger used to be the Meta app's BLE pairing (deleted in task 09). The wir
   `X-Node-Firmware`):
   - 10 s after boot, then every 6 h plus a fixed per-node jitter of up to 30 min;
   - at once on `>ota.check` (serial);
-  - a failure backs off from 1 min, doubling, up to 6 h.
+  - a failure backs off from 1 min, doubling, up to 6 h;
+  - except on probation (a fresh image, `PENDING_VERIFY`, before its first answered check): a
+    failed check is retried every 20 s, no doubling, so about 15 checks fit app.c's 300 s window
+    and a few minutes of server or edge downtime right after the update (a backend restart, say)
+    doesn't roll back, and blacklist, a good image. The backoff alone fits only 3.
 
   Why this trigger: a boot check makes "reboot it" the way to pull an update at once (a power
   cycle does it); the 6 h poll means a fleet converges within a few hours with no push channel

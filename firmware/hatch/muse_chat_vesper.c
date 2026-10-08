@@ -1663,6 +1663,13 @@ void muse_hatch_start(void)
     const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
     s_fw_slot = next ? (uint32_t)next->size : 0;
     vo_sched_init(&s_ota, now_us() / 1000);
+    /* A fresh install on probation (app.c rolls it back unless a check succeeds within 300 s):
+     * retry failed checks every 20 s instead of backing off, so a short blip doesn't cost it. */
+    esp_ota_img_states_t img_state;
+    if (esp_ota_get_state_partition(esp_ota_get_running_partition(), &img_state) == ESP_OK &&
+        img_state == ESP_OTA_IMG_PENDING_VERIFY) {
+        vo_sched_set_probation(&s_ota, true);
+    }
     ESP_LOGI(TAG, "firmware %s; updates from the node backend (first check %d s after the node is claimed and online)%s%s",
              s_fw_version, VO_FIRST_CHECK_MS / 1000, s_fw_rejected[0] ? "; rolled back here before: " : "",
              s_fw_rejected);

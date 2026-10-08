@@ -262,6 +262,54 @@ static void test_schedule(void)
     CHECK(vo_sched_due(&s, now + 5));
 }
 
+/* A fresh image (PENDING_VERIFY) must get enough checks into app.c's 300 s window to survive a
+ * few minutes of server or edge downtime, so it isn't rolled back (and blacklisted) for a blip. */
+static void test_probation(void)
+{
+    vo_sched_t s;
+    const char *id = "homelink-c86320";
+    const int64_t window = 300 * 1000;
+    vo_sched_init(&s, 0);
+    CHECK(!s.probation);
+    vo_sched_set_probation(&s, true);
+    int64_t t = s.next_ms;   /* first check, 10 s after boot */
+    CHECK(t == VO_FIRST_CHECK_MS);
+    int checks = 0;
+    while (t < window) {
+        checks++;
+        vo_sched_done(&s, false, id, t);   /* the server is down */
+        CHECK(s.next_ms - t == VO_PROBATION_RETRY_MS);   /* fixed: no doubling */
+        CHECK(s.failures == 0);
+        t = s.next_ms;
+    }
+    CHECK(checks >= 14);   /* 10 s, 30 s, ... 290 s: not 3 as with the 1/2/4 min backoff */
+    /* A 4-minute blip from boot is ridden out: the check at ~250 s succeeds, inside the window. */
+    vo_sched_init(&s, 0);
+    vo_sched_set_probation(&s, true);
+    t = s.next_ms;
+    while (t < 240 * 1000) {
+        vo_sched_done(&s, false, id, t);
+        t = s.next_ms;
+    }
+    CHECK(t < window);
+    vo_sched_done(&s, true, id, t);   /* the server answered: probation over, normal period */
+    CHECK(!s.probation && s.next_ms == t + VO_PERIOD_MS + vo_jitter_ms(id));
+    vo_sched_done(&s, false, id, t);   /* after probation, failures back off as usual again */
+    CHECK(s.next_ms - t == VO_RETRY_MIN_MS && s.failures == 1);
+    vo_sched_done(&s, false, id, t);
+    CHECK(s.next_ms - t == 2 * VO_RETRY_MIN_MS);
+    /* Without probation, the old schedule fits only 3 checks in the window. */
+    vo_sched_init(&s, 0);
+    t = s.next_ms;
+    checks = 0;
+    while (t < window) {
+        checks++;
+        vo_sched_done(&s, false, id, t);
+        t = s.next_ms;
+    }
+    CHECK(checks == 3);
+}
+
 /* Random bodies never yield an install, and never read out of bounds (ASan). */
 static void test_fuzz(void)
 {
@@ -302,6 +350,7 @@ int main(void)
     test_headers();
     test_verdicts();
     test_schedule();
+    test_probation();
     test_fuzz();
     if (s_fail) {
         fprintf(stderr, "test_vesper_ota: %d of %d checks FAILED\n", s_fail, s_checks);

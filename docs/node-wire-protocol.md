@@ -438,7 +438,9 @@ URL from the manifest; it builds this one from the hash, on its configured serve
 - **When:** only once claimed and online, between turns, never while resting: 10 s after
   boot, then every 6 hours plus a fixed per-node jitter of up to 30 minutes (from a hash of
   the node id, so a fleet doesn't check at once), and at once on the serial console's
-  `>ota.check`. A failed check or install backs off from 1 minute, doubling, up to 6 hours.
+  `>ota.check`. A failed check or install backs off from 1 minute, doubling, up to 6 hours,
+  except while a freshly installed image is on probation: then a failed check is retried every
+  20 s until one is answered.
 - **Only over https:** a node whose server URL is `http://` keeps working for turns but skips
   update checks (`>status` shows `"update":"needs_https"`). The images are signed, but with
   the SDK's public development key, so over plain http a path attacker could swap the

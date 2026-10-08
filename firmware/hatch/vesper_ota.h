@@ -56,6 +56,9 @@ extern "C" {
 #define VO_PERIOD_MS (6LL * 3600 * 1000)     /* then every 6 hours */
 #define VO_JITTER_MS (30LL * 60 * 1000)      /* + up to 30 min, by node id, to spread a fleet */
 #define VO_RETRY_MIN_MS (60LL * 1000)        /* a failed check or install: retry after this, doubling */
+#define VO_PROBATION_RETRY_MS (20LL * 1000)  /* on probation (fresh image, PENDING_VERIFY): retry this often,
+                                                no doubling, so a short server blip inside app.c's 300 s window
+                                                doesn't roll back (and blacklist) a good image */
 
 /* ---- Versions ---- */
 
@@ -150,15 +153,20 @@ const char *vo_verdict_code(vo_verdict_t v);
 typedef struct {
     int64_t next_ms;     /* the next check is due at this time */
     uint32_t failures;   /* consecutive failed checks or installs */
+    bool probation;      /* the running image is PENDING_VERIFY and no check has succeeded yet */
 } vo_sched_t;
 
-/* The first check: VO_FIRST_CHECK_MS from now. */
+/* The first check: VO_FIRST_CHECK_MS from now. Not on probation. */
 void vo_sched_init(vo_sched_t *s, int64_t now_ms);
+/* The running image is a fresh, unvalidated install (set at boot): until a check succeeds, a
+ * failed one is retried every VO_PROBATION_RETRY_MS instead of backing off. */
+void vo_sched_set_probation(vo_sched_t *s, bool probation);
 bool vo_sched_due(const vo_sched_t *s, int64_t now_ms);
 /* Milliseconds until the next check (0 if due). */
 int64_t vo_sched_wait_ms(const vo_sched_t *s, int64_t now_ms);
-/* A check (or install) ended: ok -> the next in VO_PERIOD_MS + the node's jitter; else back off
- * from VO_RETRY_MIN_MS, doubling, at most VO_PERIOD_MS. */
+/* A check (or install) ended: ok -> the next in VO_PERIOD_MS + the node's jitter, and probation
+ * ends; else, on probation, VO_PROBATION_RETRY_MS; else back off from VO_RETRY_MIN_MS, doubling,
+ * at most VO_PERIOD_MS. */
 void vo_sched_done(vo_sched_t *s, bool ok, const char *node_id, int64_t now_ms);
 /* Check now (serial >ota.check). */
 void vo_sched_now(vo_sched_t *s, int64_t now_ms);
