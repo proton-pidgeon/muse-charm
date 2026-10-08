@@ -5,10 +5,12 @@ optional **session summary**. On every ``/turn`` the history is prepended to the
 ``/ask`` text by :func:`build_ask_text`, so "tell me more about that" sees the previous reply.
 
 Session awareness: when a turn arrives more than ``idle_s`` (default 15 min) after the node's
-previous turn, the old transcript is compressed into a short summary (a brain ``/ask`` built
-by :func:`summary_request`, or :func:`extractive_summary` if that fails), stored as the session
-seed, and the transcript is cleared. The summary is prepended like the transcript, so "what
-were we talking about" still works across the gap.
+previous turn, the old transcript is compressed into a short **extractive** summary
+(:func:`extractive_summary`: Kevin's last questions + the start of Vesper's last reply, no
+LLM call), stored as the session seed, and the transcript is cleared. The brain is never asked
+to summarize: its ``/ask`` always runs the home-control tool loop, so replaying old
+utterances ("turn off the kitchen lights") to it could act on them. The summary is prepended
+like the transcript, so "what were we talking about" still works across the gap.
 
 Storage: one JSON file (default ``~/.config/vesper-voice/node-memory.json``, override
 ``VESPER_NODE_MEMORY_FILE``) on the Studio only. It is written like the registry: mode 600 in
@@ -156,30 +158,12 @@ def build_ask_text(
     return with_room_context(block + text, room) if block else bare
 
 
-SUMMARY_INSTRUCTION = (
-    "[Vesper node housekeeping, not a request to act: do not control any device or take any "
-    "action. Summarize the earlier conversation below in at most two short sentences, as "
-    "context for later turns. Reply with the summary only.]"
-)
-
-
-def summary_request(memory: NodeMemory, *, limit: int) -> str | None:
-    """The summarization ``/ask`` text, at most ``limit`` chars (None if nothing to say)."""
-    if not memory.turns:
-        return None
-    base = SUMMARY_INSTRUCTION + " "
-    budget = limit - len(base)
-    if budget < MIN_TURN_CHARS:
-        return None
-    block = history_block(memory, budget)
-    return base + block.strip() if block else None
-
-
 def extractive_summary(memory: NodeMemory) -> str | None:
-    """No-LLM fallback: Kevin's last few questions + the start of Vesper's last reply."""
+    """Session summary without an LLM: Kevin's last three questions + the start of Vesper's
+    last reply, always ``<= SUMMARY_MAX_CHARS``. An empty transcript keeps the old summary."""
     if not memory.turns:
-        return memory.summary
-    asked = "; ".join(shorten(t.user, 70) for t in memory.turns[-3:])
+        return shorten(memory.summary, SUMMARY_MAX_CHARS) if memory.summary else None
+    asked = "; ".join(shorten(t.user, 70).rstrip(".!?") for t in memory.turns[-3:])
     last = memory.turns[-1].reply
     first_sentence = re.split(r"(?<=[.!?])\s", _squash(last), maxsplit=1)[0]
     text = f"Kevin asked: {asked}. Vesper last said: {shorten(first_sentence, 120)}"

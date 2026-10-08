@@ -60,18 +60,24 @@
   the summary if it fits. The utterance is never clipped: if room prefix + utterance alone is
   over 1000 the turn is still refused as `transcript_too_long`.
 - **What is recorded:** an exchange is appended only after `/ask` returns a reply (TTS failure
-  still records it; a failed/cancelled ask records nothing). Room-assignment turns are not
+  still records it; a failed/cancelled ask records nothing; a brain fallback reply such as
+  "Sorry, …" is a 200 and is recorded as a Vesper turn — known, harmless). Room-assignment turns are not
   recorded (no brain reply; the room shows up in the room prefix anyway).
 - **Concurrency:** a per-node `asyncio.Lock` guards the read + idle-compression step and the
   append step; it is released during the main `/ask` so a slow brain doesn't block the node's
   next turn. Append re-reads under the lock, so overlapping turns both land (tested).
 - **Session awareness:** on the first turn more than the idle gap after `last_ts`, the old
-  transcript is summarized by one `/ask` (text starts with a housekeeping instruction telling
-  the brain not to act, built to fit 1000 chars), bounded by an 8 s `asyncio.wait_for` so the
-  user's turn is not held for the full 30 s ask timeout; on any failure/timeout an extractive
-  summary ("Kevin asked: …; …. Vesper last said: <first sentence>") is used. Summary ≤ 300
-  chars; transcript cleared; the summary seeds every later turn until the next compression
-  replaces it.
+  transcript is compressed into an **extractive** summary ("Kevin asked: <last 3 questions>.
+  Vesper last said: <first sentence of the last reply>"), built on the backend with no brain
+  call. The implementer's-call option of "a single brain `/ask` for summarization" was tried
+  and dropped at review: the brain's `/ask` always runs the home-control tool loop and ignores
+  the channel, so a summary request whose body is old utterances ("turn off the kitchen
+  lights") could act on them, a node-side timeout only cancels the node's wait (the brain keeps
+  running), and a brain fallback string arrives as HTTP 200 and would be stored as the
+  summary. Summary ≤ 300 chars; transcript cleared; the summary seeds every later turn until
+  the next compression replaces it. (See the design-gap notes at the end of
+  `docs/node-memory-integration.md` for the brain-side change that would enable an LLM
+  summary safely.)
 - **Voice room assignment:** `backend/src/vesper_node/roomcmd.py`. Whole-utterance regexes
   only (leading fillers like "hey Vesper," / "okay" stripped; a trailing "?" never fires).
   Phrasings that say *room* ("this room is (called) the X", "call this room X", "set your room
@@ -85,7 +91,7 @@
   that as a room name…") and the room is unchanged. A registry write failure ends the turn
   with the generic `internal` error.
 - **Logs:** counts, char lengths and labels only (`memory=<n>[+summary]|room` on `turn done`,
-  `session compressed: … summary=brain|extractive chars=N`). Tests check with caplog that no
+  `session compressed: … summary=extractive chars=N`). Tests check with caplog that no
   utterance, reply or summary text appears.
 - **Docs:** `docs/node-wire-protocol.md` (Q4 amended, pipeline step 4, operator section,
   changelog). Part 4 (`docs/node-memory-integration.md`) left as written; nothing implemented.

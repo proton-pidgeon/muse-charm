@@ -26,14 +26,13 @@ from vesper_node.brain import MAX_TEXT_CHARS
 from vesper_node.conversation import (
     HISTORY_BUDGET,
     MAX_TURNS,
-    SUMMARY_INSTRUCTION,
+    SUMMARY_MAX_CHARS,
     ConversationStore,
     NodeMemory,
     Turn,
     build_ask_text,
     extractive_summary,
     shorten,
-    summary_request,
 )
 
 HEADLINE_Q = "What's the top headline this morning"
@@ -51,25 +50,19 @@ class Clock:
 
 
 class Brain:
-    """Fake brain: scripted replies, records every /ask text, can fail summaries only."""
+    """Fake brain: scripted replies, records every /ask text (one per user turn, never more:
+    the backend must not send summarization requests to the action-capable ``/ask``)."""
 
     def __init__(self) -> None:
         self.replies: list[str] = []
         self.default = "Okay."
         self.texts: list[str] = []
-        self.summary = "Kevin asked about the markets headline and a rate cut."
-        self.summary_status = 200
         self.status = 200
-        self.summary_gate: asyncio.Event | None = None
         self.gate: asyncio.Event | None = None
 
     async def __call__(self, request: httpx.Request) -> httpx.Response:
         text = json.loads(request.content)["text"]
         self.texts.append(text)
-        if text.startswith(SUMMARY_INSTRUCTION):
-            if self.summary_gate is not None:
-                await self.summary_gate.wait()
-            return httpx.Response(self.summary_status, json={"text": self.summary})
         if self.gate is not None:
             await self.gate.wait()
         if self.status != 200:
@@ -79,11 +72,7 @@ class Brain:
 
     @property
     def turn_texts(self) -> list[str]:
-        return [t for t in self.texts if not t.startswith(SUMMARY_INSTRUCTION)]
-
-    @property
-    def summary_texts(self) -> list[str]:
-        return [t for t in self.texts if t.startswith(SUMMARY_INSTRUCTION)]
+        return self.texts
 
 
 class STT:
@@ -301,23 +290,32 @@ async def test_idle_session_compressed_to_summary_and_seeds_next_turns(
     await say(app, stt, HEADLINE_Q)
     clock.t += 10 * 60  # 10 min: still the same session
     await say(app, stt, FOLLOW_UP)
-    assert brain.summary_texts == []
+    assert len(brain.texts) == 2
+    old = store_of(app).get_sync(NODE_ID)
+    expected = extractive_summary(old)
     clock.t += 15 * 60 + 1  # idle > 15 min
     ev = await say(app, stt, "What were we talking about")
     assert ev["done"] == {"ok": True}
-    (req,) = brain.summary_texts
-    assert len(req) <= MAX_TEXT_CHARS and HEADLINE_A in req and HEADLINE_Q in req
-    seeded = brain.turn_texts[-1]
-    assert f"[Earlier session summary: {brain.summary}]" in seeded
+    # exactly one /ask: the user's turn. No summarization request goes to the brain, whose
+    # /ask always runs the home-control tool loop.
+    assert len(brain.texts) == 3
+    seeded = brain.texts[-1]
+    assert seeded.endswith("What were we talking about")
+    assert f"[Earlier session summary: {expected}]" in seeded
     assert "Recent conversation" not in seeded  # the old transcript was cleared
     memory = store_of(app).get_sync(NODE_ID)
-    assert memory.summary == brain.summary
+    assert memory.summary == expected
+    assert memory.summary is not None and memory.summary.startswith("Kevin asked: ")
+    assert HEADLINE_Q in memory.summary and FOLLOW_UP in memory.summary
+    assert "Okay." in memory.summary  # Vesper's last reply
+    assert HEADLINE_A not in memory.summary  # not the whole old transcript
+    assert len(memory.summary) <= SUMMARY_MAX_CHARS
     assert [t.user for t in memory.turns] == ["What were we talking about"]
     # the summary keeps seeding the following turns, next to the new transcript
     await say(app, stt, "And the weather")
-    later = brain.turn_texts[-1]
-    assert brain.summary in later and "What were we talking about" in later
-    assert len(brain.summary_texts) == 1
+    later = brain.texts[-1]
+    assert expected in later and "What were we talking about" in later
+    assert len(brain.texts) == 4
 
 
 async def test_summary_survives_restart(mkapp, brain, stt, clock, tmp_path) -> None:
@@ -326,47 +324,59 @@ async def test_summary_survives_restart(mkapp, brain, stt, clock, tmp_path) -> N
     clock.t += 3600
     app2 = mkapp(ConversationStore(path, clock=clock))  # restarted during the gap
     await say(app2, stt, "What were we talking about")
-    assert brain.summary in brain.turn_texts[-1]
-    assert ConversationStore(path).get_sync(NODE_ID).summary == brain.summary
+    assert len(brain.texts) == 2  # still no summarization /ask
+    summary = ConversationStore(path).get_sync(NODE_ID).summary
+    assert summary is not None and HEADLINE_Q in summary
+    assert f"[Earlier session summary: {summary}]" in brain.texts[-1]
 
 
-async def test_extractive_fallback_when_summary_ask_fails(mkapp, brain, stt, clock) -> None:
+async def test_idle_compression_never_replays_old_utterances_to_brain(
+    mkapp, brain, stt, clock
+) -> None:
+    """The old transcript holds things like device commands; they must not reach /ask again."""
+    app = mkapp()
+    brain.replies = ["Done, the kitchen lights are off."]
+    await say(app, stt, "Turn off the kitchen lights")
+    clock.t += 16 * 60
+    ev = await say(app, stt, "What were we talking about")
+    assert ev["done"] == {"ok": True}
+    assert len(brain.texts) == 2
+    assert brain.texts[-1].count("Turn off the kitchen lights") == 1  # summary context only
+    assert "[Earlier session summary: Kevin asked: Turn off the kitchen lights." in brain.texts[-1]
+
+
+async def test_idle_compression_with_failed_brain_still_seeds(mkapp, brain, stt, clock) -> None:
     app = mkapp()
     brain.replies = [HEADLINE_A]
     await say(app, stt, HEADLINE_Q)
     clock.t += 16 * 60
-    brain.summary_status = 500
+    brain.status = 500  # the brain is down for the new turn
     ev = await say(app, stt, "What were we talking about")
-    assert ev["done"] == {"ok": True}  # the turn itself is unaffected
-    summary = store_of(app).get_sync(NODE_ID).summary
+    assert ev["done"] == {"ok": False}
+    summary = store_of(app).get_sync(NODE_ID).summary  # compressed regardless
     assert summary is not None and HEADLINE_Q in summary
-    assert summary in brain.turn_texts[-1]
+    assert summary in brain.texts[-1]
 
 
-async def test_extractive_fallback_on_summary_timeout(mkapp, brain, stt, clock) -> None:
-    app = mkapp(summary_timeout_s=0.05)
-    await say(app, stt, HEADLINE_Q)
-    clock.t += 16 * 60
-    brain.summary_gate = asyncio.Event()  # never set: the summary ask hangs
-    ev = await say(app, stt, "What were we talking about")
-    assert ev["done"] == {"ok": True}
-    assert HEADLINE_Q in (store_of(app).get_sync(NODE_ID).summary or "")
-
-
-def test_summary_request_stays_under_limit() -> None:
+def test_extractive_summary_is_bounded() -> None:
     turns = [Turn("q" * 1000, "a" * 1000, float(i)) for i in range(MAX_TURNS)]
-    req = summary_request(NodeMemory(turns, "old summary " * 30), limit=MAX_TEXT_CHARS)
-    assert req is not None and len(req) <= MAX_TEXT_CHARS
-    assert summary_request(NodeMemory(), limit=MAX_TEXT_CHARS) is None
+    s = extractive_summary(NodeMemory(turns, "old summary " * 30))
+    assert s is not None and len(s) <= SUMMARY_MAX_CHARS
+    assert s.startswith("Kevin asked: ")
+    assert extractive_summary(NodeMemory()) is None
+    stale = extractive_summary(NodeMemory([], "x " * 400, 1.0))
+    assert stale is not None and len(stale) <= SUMMARY_MAX_CHARS
 
 
 def test_extractive_summary_shape() -> None:
     memory = NodeMemory(
-        [Turn("first q", "x", 1.0), Turn("second q", "It is sunny. Highs of 70.", 2.0)]
+        [Turn("first q", "x", 1.0), Turn("second q?", "It is sunny. Highs of 70.", 2.0)]
     )
     s = extractive_summary(memory)
     assert s == "Kevin asked: first q; second q. Vesper last said: It is sunny."
     assert extractive_summary(NodeMemory([], "keep me", 1.0)) == "keep me"
+    four = NodeMemory([Turn(f"q{i}", f"r{i}.", float(i)) for i in range(4)])
+    assert extractive_summary(four) == "Kevin asked: q1; q2; q3. Vesper last said: r3."
 
 
 # ---- privacy ------------------------------------------------------------------------------
@@ -379,10 +389,9 @@ async def test_memory_text_never_logged(mkapp, brain, stt, clock, caplog) -> Non
     await say(app, stt, HEADLINE_Q)
     await say(app, stt, FOLLOW_UP)
     clock.t += 3600
-    await say(app, stt, "What were we talking about")  # brain summary
+    await say(app, stt, "What were we talking about")  # extractive summary
     clock.t += 3600
-    brain.summary_status = 500
-    await say(app, stt, "Anything else")  # extractive summary
+    await say(app, stt, "Anything else")  # second compression
     await say(app, stt, "You're in the study")  # room assignment
     text = caplog.text + "".join(str(r.args) for r in caplog.records)
     assert "session compressed" in text and "summary=extractive" in text
@@ -393,7 +402,6 @@ async def test_memory_text_never_logged(mkapp, brain, stt, clock, caplog) -> Non
         "talking about",
         "Anything else",
         "You're in the study",
-        brain.summary,
         "Kevin asked",
         "rate cut",
     ):

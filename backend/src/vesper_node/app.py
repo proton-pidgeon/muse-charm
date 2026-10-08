@@ -36,7 +36,8 @@ Logs carry the node id, counts, char lengths, latencies, providers and status co
 
 Turn pipeline: STT -> voice room assignment (:mod:`vesper_node.roomcmd`: "you're in the
 office" updates the registry and is confirmed locally, no brain call) -> session check
-(idle > 15 min: compress the old transcript into a summary) -> ``/ask`` with room + history
+(idle > 15 min: compress the old transcript into an extractive summary, no brain call) ->
+``/ask`` with room + history
 -> record the exchange -> TTS.
 """
 
@@ -63,13 +64,10 @@ from .brain import MAX_TEXT_CHARS, AskError, BrainClient, with_room_context
 from .config import ConfigError, Settings, load_settings
 from .conversation import (
     HISTORY_BUDGET,
-    SUMMARY_MAX_CHARS,
     ConversationStore,
     NodeMemory,
     build_ask_text,
     extractive_summary,
-    shorten,
-    summary_request,
 )
 from .firmware import IMAGE_NAME_RE, VERSION_RE, FirmwareError, FirmwareStore
 from .registry import NODE_ID_RE, POLL_INTERVAL_S, ClaimError, NodeAuth, Registry, RegistryError
@@ -98,10 +96,6 @@ ADMIN_PREFIX = "/admin/"
 ADMIN_HEADER = b"x-vesper-node-admin"
 MAX_ADMIN_BODY_BYTES = 1024
 NODE_AUTH_SCOPE_KEY = "vesper_node.auth"
-# The session-summary /ask runs inside a user's turn: bound it well below the 30 s ask timeout
-# and fall back to the extractive summary.
-SUMMARY_TIMEOUT_S = 8.0
-
 # Fixed, safe captions for SSE `error` events (never derived from user input).
 ERROR_MESSAGES = {
     "empty_transcript": "Sorry, I didn't catch that.",
@@ -295,7 +289,6 @@ def create_app(
     registry: Registry | None = None,
     firmware: FirmwareStore | None = None,
     conversations: ConversationStore | None = None,
-    summary_timeout_s: float = SUMMARY_TIMEOUT_S,
 ) -> BearerAuth:
     """Build the ASGI app (FastAPI wrapped in :class:`BearerAuth`). Transports are for tests."""
     if registry is None:
@@ -374,25 +367,15 @@ def create_app(
         except OSError as e:  # keep the turn: memory stays in RAM until the next write
             log.error("node memory write failed: node=%s reason=%s", node_id, type(e).__name__)
 
-    async def summarize(node_id: str, old: NodeMemory) -> NodeMemory:
-        """Compress an idle session: brain summary (bounded), else extractive. Lock held."""
-        request = summary_request(old, limit=MAX_TEXT_CHARS)
-        summary, how = None, "extractive"
-        if request is not None:
-            try:
-                got = await asyncio.wait_for(
-                    brain.ask(request, node_id=node_id), timeout=summary_timeout_s
-                )
-                summary, how = shorten(got.text, SUMMARY_MAX_CHARS), "brain"
-            except (AskError, TimeoutError):
-                summary = None
-        if not summary:
-            summary, how = extractive_summary(old), "extractive"
+    def summarize(node_id: str, old: NodeMemory) -> NodeMemory:
+        """Compress an idle session with the extractive summary (no brain call: ``/ask``
+        always runs the home-control tool loop, so old utterances must never be replayed to
+        it). Lock held."""
+        summary = extractive_summary(old)
         log.info(
-            "session compressed: node=%s turns=%d summary=%s chars=%d",
+            "session compressed: node=%s turns=%d summary=extractive chars=%d",
             node_id,
             len(old.turns),
-            how,
             len(summary or ""),
         )
         return memory.compressed(old, summary)
@@ -401,7 +384,7 @@ def create_app(
         """This node's memory for the next ask, compressing an idle session first."""
         current = await memory.get(node_id)
         if memory.is_idle(current, memory.clock()):
-            current = await summarize(node_id, current)
+            current = summarize(node_id, current)
             await save_memory(node_id, current)
         return current
 

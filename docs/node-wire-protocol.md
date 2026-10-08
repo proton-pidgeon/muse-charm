@@ -258,10 +258,13 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
    at most 640 chars and the total never over 1000. History shrinks to fit; the transcript is
    never clipped. On a node's first turn (no history) the text is exactly the task-08 form.
    The memory holds the last 15 exchanges per node; an exchange is recorded only when `/ask`
-   returned a reply. After 15 idle minutes (`VESPER_NODE_SESSION_IDLE_MINUTES`) the next turn
-   first compresses the old exchanges into a short summary: one extra `/ask` (bounded to 8 s,
-   text starts `[Vesper node housekeeping, not a request to act: …]`), or an extractive
-   summary if that fails. The summary is kept and the old exchanges are cleared.
+   returned a reply (a brain fallback reply such as "Sorry, …" arrives as a normal 200 and is
+   recorded as a Vesper turn like any other — known, harmless). After 15 idle minutes
+   (`VESPER_NODE_SESSION_IDLE_MINUTES`) the next turn first compresses the old exchanges into
+   a short **extractive** summary (`Kevin asked: …; …. Vesper last said: …`, at most 300
+   chars) built on the backend with no brain call: `/ask` always runs the home-control tool
+   loop, so old utterances are never replayed to it. The summary is kept and the old
+   exchanges are cleared.
    **Voice room assignment (task 16):** a whole utterance like "you're in the office", "this
    is the kitchen", "call this the study" or "this room is the den" never reaches the brain.
    The backend sets the registry room and replies "Got it — this is the office now." through
