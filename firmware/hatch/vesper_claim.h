@@ -175,7 +175,14 @@ bool vc_take_credential(vc_claim_t *c, char out[VC_CRED_MAX + 1]);
 /* Wipes every secret in the struct (secret, credential). */
 void vc_wipe(vc_claim_t *c);
 
-/* For the screen: "CLAIM CODE K7M2-QX9P", "GETTING A CLAIM CODE", "TOKEN REFUSED", ...; "" when claimed. */
+/*
+ * Widest caption the AIPI Lite's 128x128 screen shows whole. muse_ui.c's compact layout draws the
+ * caption in one line of unscii_8 (8 px glyphs) across the 128 px width, which is 16 columns; any
+ * longer text ends in "..." (task 15: "CLAIM CODE K7M2-QX9P" showed as "CLAIM CODE K7...").
+ * Every vc_caption() text stays within it, so the whole XXXX-XXXX code is always on screen.
+ */
+#define VC_CAPTION_COLS 16
+/* For the screen: "CODE K7M2-QX9P", "GETTING A CODE", "TOKEN REFUSED", ...; "" when claimed. All <= VC_CAPTION_COLS. */
 void vc_caption(const vc_claim_t *c, char *out, size_t cap);
 /* For status JSON: "claimed", "starting" or "pending". Never the code or a secret. */
 const char *vc_state_name(const vc_claim_t *c);

@@ -173,7 +173,7 @@ static void test_happy_path(void)
     CHECK(vc_wait_ms(&c, t) == 0);
     CHECK_STR(vc_state_name(&c), "starting");
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "GETTING A CLAIM CODE");
+    CHECK_STR(cap, "GETTING A CODE");
 
     CHECK(start(&c, 200, START_OK, NULL, t) == VC_EV_CODE);
     CHECK(c.state == VC_POLL);
@@ -182,8 +182,9 @@ static void test_happy_path(void)
     CHECK(c.codes == 1);
     CHECK_STR(vc_state_name(&c), "pending");
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "CLAIM CODE K7M2-QX9P");
-    CHECK(strlen(cap) <= 20);   /* two lines of the AIPI's 16 columns: "CLAIM CODE" / "K7M2-QX9P" */
+    CHECK_STR(cap, "CODE K7M2-QX9P");
+    CHECK(strstr(cap, c.code) != NULL);          /* the whole XXXX-XXXX, never a prefix of it */
+    CHECK(strlen(cap) <= VC_CAPTION_COLS);       /* one unscii_8 line of the AIPI: no "..." */
     CHECK(!strstr(cap, "vcs_"));
 
     /* polls every 3 s */
@@ -232,7 +233,7 @@ static void test_start_problems(void)
         t = c.due_ms;
     }
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "CAN'T REACH VESPER");
+    CHECK_STR(cap, "VESPER OFFLINE");
     /* success resets the backoff */
     CHECK(start(&c, 200, START_OK, NULL, t) == VC_EV_CODE);
     CHECK(c.backoff_ms == VC_BACKOFF_MIN_MS);
@@ -259,7 +260,7 @@ static void test_start_problems(void)
     CHECK(start(&c, 404, "{\"error\": \"not_found\"}", NULL, t) == VC_EV_PROBLEM);   /* a pre-task-08 backend */
     CHECK(c.due_ms == t + VC_REFUSED_MS);
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "CHECK THE SERVER URL");
+    CHECK_STR(cap, "CHECK SERVER URL");
 
     /* malformed 200s are server errors, and nothing of them is kept */
     const char *bad[] = {
@@ -279,7 +280,7 @@ static void test_start_problems(void)
         CHECK(start(&c, 200, bad[i], NULL, t) == VC_EV_PROBLEM);
         CHECK(c.state == VC_START && !c.code[0] && all_zero(c.secret, sizeof(c.secret)));
         vc_caption(&c, cap, sizeof(cap));
-        CHECK_STR(cap, "VESPER SERVER ERROR");
+        CHECK_STR(cap, "SERVER ERROR");
     }
     /* a secret longer than fits is cut by the JSON decoder and then refused, never used cut */
     char big[VC_BODY_MAX];
@@ -314,7 +315,7 @@ static void test_poll_problems(void)
     CHECK(vc_due(&c, t) == VC_ACT_NONE);
     CHECK(vc_due(&c, started + VC_RESTART_MS) == VC_ACT_START);
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "GETTING A NEW CODE");
+    CHECK_STR(cap, "GETTING NEW CODE");
     /* a later code replaces the screen's */
     t = started + VC_RESTART_MS;
     CHECK(start(&c, 200, "{\"status\":\"pending\",\"claim_code\":\"WXYZ-2345\",\"claim_secret\":\"" SECRET "\"}", NULL,
@@ -333,7 +334,7 @@ static void test_poll_problems(void)
     CHECK(poll(&c, 0, NULL, NULL, t) == VC_EV_PROBLEM);
     CHECK(c.state == VC_POLL && c.due_ms == t + 5000);
     vc_caption(&c, cap, sizeof(cap));
-    CHECK_STR(cap, "CLAIM CODE K7M2-QX9P");
+    CHECK_STR(cap, "CODE K7M2-QX9P");
     CHECK_STR(c.secret, SECRET);
     t = c.due_ms;
     CHECK(poll(&c, 503, "{\"error\": \"registry_unavailable\"}", NULL, t) == VC_EV_PROBLEM);
@@ -360,7 +361,7 @@ static void test_poll_problems(void)
         CHECK(poll(&c, 200, bad[i], NULL, t + 3000) == VC_EV_RESTART);
         CHECK(c.state == VC_START && !c.credential[0] && all_zero(c.secret, sizeof(c.secret)));
         vc_caption(&c, cap, sizeof(cap));
-        CHECK_STR(cap, "VESPER SERVER ERROR");
+        CHECK_STR(cap, "SERVER ERROR");
     }
     /* a bad room doesn't lose a good credential (the room is for the screen only) */
     vc_init(&c, false, t);
@@ -427,6 +428,43 @@ static void test_fuzz(void)
     CHECK(poll(&c, 200, POLL_OK, NULL, 3000) == VC_EV_CLAIMED);
 }
 
+/* Task 15: the AIPI's caption is one 16-column line; "CLAIM CODE K7..." hid the code. */
+static void test_caption_fits_screen(void)
+{
+    vc_claim_t c;
+    char cap[48];
+    vc_init(&c, false, 0);
+    /* wide and narrow codes, in the pending state, with and without a problem note */
+    static const char *codes[] = { "WWWW-WWWW", "MMMM-MMMM", "2222-2222", "K7M2-QX9P", "ZZZZ-ZZZZ" };
+    for (size_t i = 0; i < sizeof(codes) / sizeof(codes[0]); i++) {
+        for (int note = VC_NOTE_NONE; note <= VC_NOTE_EXPIRED; note++) {
+            c.state = VC_POLL;
+            c.note = (vc_note_t)note;
+            snprintf(c.code, sizeof(c.code), "%s", codes[i]);
+            vc_caption(&c, cap, sizeof(cap));
+            CHECK(strstr(cap, codes[i]) != NULL);        /* the full XXXX-XXXX */
+            CHECK(strlen(cap) <= VC_CAPTION_COLS);
+        }
+    }
+    /* every other caption fits too, so none ends in "..." on the board */
+    for (int st = VC_START; st <= VC_POLL; st++) {
+        for (int note = VC_NOTE_NONE; note <= VC_NOTE_EXPIRED; note++) {
+            c.state = (vc_state_t)st;
+            c.note = (vc_note_t)note;
+            c.code[0] = '\0';
+            vc_caption(&c, cap, sizeof(cap));
+            CHECK(strlen(cap) <= VC_CAPTION_COLS);
+            CHECK(cap[0] != '\0');
+        }
+    }
+    /* a buffer of exactly the budget (plus NUL) holds the longest caption whole */
+    c.state = VC_POLL;
+    snprintf(c.code, sizeof(c.code), "WWWW-WWWW");
+    char tiny[VC_CAPTION_COLS + 1];
+    vc_caption(&c, tiny, sizeof(tiny));
+    CHECK_STR(tiny, "CODE WWWW-WWWW");
+}
+
 int main(void)
 {
     test_validation();
@@ -435,6 +473,7 @@ int main(void)
     test_start_problems();
     test_poll_problems();
     test_reclaim_and_config();
+    test_caption_fits_screen();
     test_fuzz();
     printf("vesper_claim: %d checks, %d failed\n", s_checks, s_fail);
     return s_fail ? 1 : 0;

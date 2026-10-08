@@ -395,20 +395,20 @@ void vc_caption(const vc_claim_t *c, char *out, size_t cap)
     }
     if (c->state == VC_POLL && c->code[0]) {
         /* A problem while polling doesn't hide the code: it may still be approved. */
-        snprintf(out, cap, "CLAIM CODE %s", c->code);
+        snprintf(out, cap, "CODE %s", c->code);
         return;
     }
     const char *msg;
     switch (c->note) {
-    case VC_NOTE_UNREACHABLE: msg = "CAN'T REACH VESPER"; break;
+    case VC_NOTE_UNREACHABLE: msg = "VESPER OFFLINE"; break;
     case VC_NOTE_TOKEN_REFUSED: msg = "TOKEN REFUSED"; break;
     case VC_NOTE_REFUSED: msg = "CLAIM REFUSED"; break;
-    case VC_NOTE_NO_CLAIM_ROUTE: msg = "CHECK THE SERVER URL"; break;
+    case VC_NOTE_NO_CLAIM_ROUTE: msg = "CHECK SERVER URL"; break;
     case VC_NOTE_BUSY: msg = "VESPER IS BUSY"; break;
-    case VC_NOTE_SERVER_ERROR: msg = "VESPER SERVER ERROR"; break;
-    case VC_NOTE_EXPIRED: msg = "GETTING A NEW CODE"; break;
+    case VC_NOTE_SERVER_ERROR: msg = "SERVER ERROR"; break;
+    case VC_NOTE_EXPIRED: msg = "GETTING NEW CODE"; break;
     case VC_NOTE_NONE:
-    default: msg = "GETTING A CLAIM CODE"; break;
+    default: msg = "GETTING A CODE"; break;
     }
     put(out, cap, msg);
 }
