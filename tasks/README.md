@@ -10,7 +10,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 02 | [Sim live transport](02-sim-live-transport.md) | cancelled (superseded by Vesper node design) | 01 |
 | 03 | [AiPi Lite bring-up prep](03-aipi-lite-bringup-prep.md) | done | – |
 | 04 | [A1 — Vesper pixel avatar](04-vesper-pixel-avatar.md) | done | – |
-| 05 | [A2 — Avatar on-device validation](05-avatar-on-device-validation.md) | not started (human-gated: device) | 04 |
+| 05 | [A2 — Avatar on-device validation](05-avatar-on-device-validation.md) | flashed + framebuffer-verified; blocked on Kevin: re-pair + eyes-on | 04 |
 | 06 | [B3 — `channel="node"` variant in vesper-voice](06-node-channel-variant.md) | not started | – |
 | 07 | [B1 — Node backend service](07-node-backend-service.md) | not started | 06 |
 | 08 | [B2 — Node registry + credentials](08-node-registry.md) | not started | 07 |
