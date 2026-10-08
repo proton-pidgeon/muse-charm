@@ -36,7 +36,8 @@ Implementation note: significance is judged in the node backend (it owns the tra
     "significance": "explicit",
     "reason": "user said 'remember that'",
     "status": "pending",
-    "dedupe_key": "sha256:…"
+    "dedupe_key": "sha256:…",
+    "speaker": "unverified"
   }
   ```
 - **Never stored:** audio bytes, full transcripts (candidate carries a summary or the single significant exchange only), anything not clearly Kevin's own statement.
@@ -117,7 +118,10 @@ dropped). `written_to` is the memory file touched (`MEMORY.md`, `memory/2026-10-
 2. Collapse exact repeats by `dedupe_key` (the backend does not suppress them: Kevin saying it
    twice is weak evidence it matters). Decide the first, mark the rest `reviewed` with reason
    `duplicate of <id>`.
-3. For each remaining candidate: `muse.memory_search` for the core fact (dedup against curated
+3. **Speaker is not verified:** every candidate carries `"speaker": "unverified"` because the
+   node has no voice ID. Treat `node_id`/`room` as context, not proof of who spoke; word the
+   memory accordingly ("said at the office node") when attribution matters. Then, for each
+   remaining candidate: `muse.memory_search` for the core fact (dedup against curated
    memory); decide if it is durable; write it to the right place (`MEMORY.md` for standing
    facts, daily notes for events and reminders); merge, never duplicate.
 4. A candidate that contradicts existing memory is **not** written: flag it to Kevin and record
@@ -145,14 +149,16 @@ candidates, so the warning means the review loop is stuck.
   *Explicit*: a sentence that starts with an imperative trigger ("remember that/this/to …",
   "don't forget …", "save that", "note that …", "make a note …", "keep in mind …", optionally
   after "hey Vesper", "please", "can you"). A bare "remember that" points at the preceding
-  sentence of the same utterance, else at this node's previous exchange in the current session.
+  sentence of the same utterance (or, if the pointer comes first, the following one), else at
+  this node's previous exchange in the current session (Kevin's words + Vesper's answer).
   *Heuristic* (tight): first-person preference ("I like my coffee black"), favourite,
   birthday/anniversary, allergy/diet, "remind me to …", a dated appointment, a few personal
   details. *Never*: questions, recall ("remember when …", "do you remember …"), follow-ups,
   small talk, transient state, device commands, hedged/hypothetical sentences, short timers
   ("in 10 minutes"), deictic objects ("I like that"), and reported speech or other people's
   attitudes ("my wife said …", "he told me …", "she wants …", "Charity likes …").
-- **Candidate**: the spec §2 fields plus `id` (random, for §7 decisions) and `dedupe_key`
+- **Candidate**: the spec §2 fields plus `id` (random, for §7 decisions), `speaker`
+  (always `"unverified"`: no voice ID, spec §5 "clearly marked") and `dedupe_key`
   (`sha256:` + 32 hex of the lower-cased, punctuation-free core fact, so "Remember that I like
   my coffee black." and "I like my coffee black" collide). `user_text` is the significant
   sentence(s) only, `vesper_reply` the reply; both capped at 300 chars. Never audio, never the
@@ -179,7 +185,8 @@ candidates, so the warning means the review loop is stuck.
   third-person attitudes). Anything said at the node is attributed to the speaker of that turn.
   Vesper should treat `room`/`node_id` as context, not as proof of who spoke.
 - **Added fields.** Each candidate carries an `id` (not in the original §2 example) so §7
-  decisions can refer to it; `dedupe_key` is present as §4 asks.
+  decisions can refer to it, and `"speaker": "unverified"` so it is "clearly marked" (§5);
+  `dedupe_key` is present as §4 asks.
 - **Reminders.** "Remember to turn off the lights" / "remind me to call the plumber" are staged
   as candidates (proposals only). The stager never executes anything, and the brain already
   answered the turn itself as usual. Short timers ("in 10 minutes") are not staged.

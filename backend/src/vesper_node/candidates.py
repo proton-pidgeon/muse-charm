@@ -17,8 +17,8 @@ pollutes the curated store):
 
 * **explicit**: a sentence that *starts* with an imperative trigger: "remember (that|this|to)
   …", "don't forget …", "save that", "note that …", "make a note …", "keep in mind …". A bare
-  "remember that" points at the preceding sentence of the same utterance, or else at the
-  previous exchange of this node's session.
+  "remember that" points at the preceding sentence of the same utterance (or, if the pointer
+  comes first, the following one), else at the previous exchange of this node's session.
 * **heuristic**: a short, declarative, first-person sentence matching a tight pattern: a
   preference ("I like my coffee black"), a favourite, a birthday/anniversary, an allergy or
   diet, a reminder request ("remind me to call the plumber"), a dated appointment.
