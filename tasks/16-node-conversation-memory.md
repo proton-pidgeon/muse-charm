@@ -32,12 +32,65 @@
 - The spec is ALREADY WRITTEN: `docs/node-memory-integration.md` (coordinator, 2026-10-08). READ IT — do not rewrite it. If implementation reveals a design gap, note it in the file as a comment for Kevin's review, but do not change the design unilaterally. No code for Part 4 in this task.
 
 ## Definition of done
-- [ ] Working transcript: 15-turn history per node, survives restarts, prepended to /ask; "tell me more about that" works within a session (manual or automated test as proof)
-- [ ] Session awareness: 15-min idle compresses to a summary; summary seeds the next session
-- [ ] Voice room assignment: "you're in the office" updates the registry and confirms by voice; no false positives on incidental mentions (tests as proof)
-- [ ] Part 4 spec written (`docs/node-memory-integration.md`); explicitly NOT implemented
+- [x] Working transcript: 15-turn history per node, survives restarts, prepended to /ask; "tell me more about that" works within a session (manual or automated test as proof)
+- [x] Session awareness: 15-min idle compresses to a summary; summary seeds the next session
+- [x] Voice room assignment: "you're in the office" updates the registry and confirms by voice; no false positives on incidental mentions (tests as proof)
+- [x] Part 4 spec written (`docs/node-memory-integration.md`); explicitly NOT implemented
 - [ ] Green build + adversarial review per the /implement gates; merged to main
 - [ ] Backend redeployed (launchd) with the new code; live PTT test confirms context works
+
+## Implementation notes (implement/16-node-conversation-memory)
+
+- **Where state lives:** `backend/src/vesper_node/conversation.py` (`ConversationStore`). One
+  JSON file, default `~/.config/vesper-voice/node-memory.json` (next to `nodes.json`), keyed by
+  node id: last 15 turns `{user, reply, ts}`, `summary`, `last_ts`. Written like the registry:
+  temp file + fsync + `os.replace` + dir fsync, mode 600 in a 700 dir; read with `O_NOFOLLOW`;
+  a malformed/group-readable file is ignored (logged by name) and replaced on the next write.
+  The service is the only writer, so its RAM copy is authoritative after the first load; a
+  failed write is logged and the turn still succeeds (memory stays in RAM until a restart).
+  Timestamps are wall-clock so idle detection survives restarts. Hand-built test settings
+  (`memory_file=None`) keep memory in RAM only, so no test touches `~/.config`.
+- **Config knobs:** `VESPER_NODE_MEMORY_FILE`, `VESPER_NODE_SESSION_IDLE_MINUTES` (default 15,
+  1-1440). Both shown by `vesper-node check-config` and stripped by `make test` (keyless).
+- **Prompt shape:** `[Vesper node in the <room>] [Earlier session summary: …] [Recent
+  conversation, oldest first: Kevin: … / Vesper: … // …] <utterance>`. With no history the
+  text is exactly the task-08 form. History block ≤ 640 chars (`HISTORY_BUDGET`) and always
+  fits what is left of the 1000-char limit after the room prefix + utterance: newest 3 turns up
+  to 320 chars per side, older ones 60 per side, newest first until the budget runs out, then
+  the summary if it fits. The utterance is never clipped: if room prefix + utterance alone is
+  over 1000 the turn is still refused as `transcript_too_long`.
+- **What is recorded:** an exchange is appended only after `/ask` returns a reply (TTS failure
+  still records it; a failed/cancelled ask records nothing). Room-assignment turns are not
+  recorded (no brain reply; the room shows up in the room prefix anyway).
+- **Concurrency:** a per-node `asyncio.Lock` guards the read + idle-compression step and the
+  append step; it is released during the main `/ask` so a slow brain doesn't block the node's
+  next turn. Append re-reads under the lock, so overlapping turns both land (tested).
+- **Session awareness:** on the first turn more than the idle gap after `last_ts`, the old
+  transcript is summarized by one `/ask` (text starts with a housekeeping instruction telling
+  the brain not to act, built to fit 1000 chars), bounded by an 8 s `asyncio.wait_for` so the
+  user's turn is not held for the full 30 s ask timeout; on any failure/timeout an extractive
+  summary ("Kevin asked: …; …. Vesper last said: <first sentence>") is used. Summary ≤ 300
+  chars; transcript cleared; the summary seeds every later turn until the next compression
+  replaces it.
+- **Voice room assignment:** `backend/src/vesper_node/roomcmd.py`. Whole-utterance regexes
+  only (leading fillers like "hey Vesper," / "okay" stripped; a trailing "?" never fires).
+  Phrasings that say *room* ("this room is (called) the X", "call this room X", "set your room
+  to X", "your room is X") accept any name; ordinary-English phrasings ("you're in the X",
+  "this is the X", "call this the X") fire only when the name ends in a room noun (office,
+  kitchen, study, den, bedroom, …), so "you're in the way" / "this is the best day" never
+  match. Max 3 words; apostrophes dropped, hyphens to spaces, lower-cased, then `valid_room`.
+  On a match the registry is updated and "Got it — this is the <room> now." is spoken via the
+  normal `message_*` events + TTS, with no brain call. **Invalid name decision:** the turn
+  does not fall through to the brain; the node speaks a short refusal ("Sorry, I can't use
+  that as a room name…") and the room is unchanged. A registry write failure ends the turn
+  with the generic `internal` error.
+- **Logs:** counts, char lengths and labels only (`memory=<n>[+summary]|room` on `turn done`,
+  `session compressed: … summary=brain|extractive chars=N`). Tests check with caplog that no
+  utterance, reply or summary text appears.
+- **Docs:** `docs/node-wire-protocol.md` (Q4 amended, pipeline step 4, operator section,
+  changelog). Part 4 (`docs/node-memory-integration.md`) left as written; nothing implemented.
+- **Tests:** `backend/tests/test_conversation.py`, `backend/tests/test_roomcmd.py`, plus config
+  tests in `test_config.py`.
 
 ## Anti-deliverables (do NOT build in this task)
 - Part 4 implementation (spec only)

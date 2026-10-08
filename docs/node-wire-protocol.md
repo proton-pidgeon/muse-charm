@@ -16,7 +16,7 @@ and no wake word.
 | Open question | Decision | Effect on the protocol / backend |
 |---|---|---|
 | Q1 TTS voice | Reuse the phone brain's ElevenLabs voice: `VESPER_PHONE_TTS_VOICE_ID`, model `eleven_flash_v2_5`, `phone_tts.py` discipline. No new voice. | `message_done.audio_url` is an MP3 in that voice. |
-| Q4 transcripts | **Transient only.** The backend never logs or persists transcripts or reply text. | Logs carry lengths, latencies, provider, status codes only. Tests enforce this. MP3s live in memory only, with a TTL. |
+| Q4 transcripts | **Transient only.** The backend never logs or persists transcripts or reply text. **Amended 2026-10-08 (task 16, Kevin's request):** the backend keeps a per-node conversation memory on the Studio (last 15 exchanges + a session summary, `VESPER_NODE_MEMORY_FILE`, mode 600) so follow-ups work. It is still never logged. | Logs carry lengths, latencies, provider, status codes only. Tests enforce this. MP3s live in memory only, with a TTL. |
 | Q6 LiveKit spike | No spike. Build the HTTP shim. | This doc. |
 | PTT vs wake word | PTT for v1. | Whole-note upload, below. |
 
@@ -252,6 +252,21 @@ A TTS failure is **not** an error. The turn still succeeds, with `audio_url: nul
    `text` is `"[Vesper node in the <room>] <transcript>"`, with the room taken from the
    registry. The prefixed text must fit `/ask`'s 1000-char limit, or the turn ends as
    `transcript_too_long`. `device_id` is still the bare `node_id`.
+   **Conversation memory (task 16):** after the room prefix the backend inserts
+   `[Earlier session summary: …] [Recent conversation, oldest first: Kevin: … / Vesper: … // …] `
+   before the transcript, newest turns nearly verbatim, older ones truncated, the whole block
+   at most 640 chars and the total never over 1000. History shrinks to fit; the transcript is
+   never clipped. On a node's first turn (no history) the text is exactly the task-08 form.
+   The memory holds the last 15 exchanges per node; an exchange is recorded only when `/ask`
+   returned a reply. After 15 idle minutes (`VESPER_NODE_SESSION_IDLE_MINUTES`) the next turn
+   first compresses the old exchanges into a short summary: one extra `/ask` (bounded to 8 s,
+   text starts `[Vesper node housekeeping, not a request to act: …]`), or an extractive
+   summary if that fails. The summary is kept and the old exchanges are cleared.
+   **Voice room assignment (task 16):** a whole utterance like "you're in the office", "this
+   is the kitchen", "call this the study" or "this room is the den" never reaches the brain.
+   The backend sets the registry room and replies "Got it — this is the office now." through
+   the normal `message_*` events + TTS. An unusable name gets a short spoken refusal and the
+   room is unchanged. Incidental mentions ("is the office light on") go to the brain as usual.
 5. **TTS** (`phone_tts.py` discipline). ElevenLabs `POST /v1/text-to-speech/{voice}` with
    `model_id=eleven_flash_v2_5`, `output_format=mp3_22050_32`, voice
    `VESPER_PHONE_TTS_VOICE_ID`, a 4 s hard timeout and a 500-char cap (cut at a word boundary
@@ -400,6 +415,18 @@ F3 ships:
 
 While the transition is on, anyone who holds `VESPER_NODE_TOKEN` can speak as that one node.
 That is exactly the pre-task-08 status quo, limited to one node id.
+
+## Operator: conversation memory (task 16)
+
+- **File:** `~/.config/vesper-voice/node-memory.json` (override with `VESPER_NODE_MEMORY_FILE`),
+  mode 600 in a 700 directory, written atomically by the running service only. It holds, per
+  node id, the last 15 exchanges (Kevin's words + Vesper's reply), the session summary and the
+  last-turn time. It never leaves the Studio.
+- **Session gap:** `VESPER_NODE_SESSION_IDLE_MINUTES` (default 15).
+- **Wipe:** stop the service (`launchctl bootout`), delete the file, start it again. The
+  service keeps the memory in RAM, so deleting the file under a running service is undone by
+  the next turn. A malformed or group-readable file is ignored (logged by name) and replaced
+  on the next write.
 
 ## Firmware updates (task 13)
 
@@ -612,3 +639,6 @@ of this changes the wire shape, so the version stays 1.
   `GET /firmware/{sha256}.bin` (same node auth as `/turn`), the `X-Node-Firmware` header, and
   the *Firmware updates* and *Operator: firmware* sections. New routes only, so the version
   stays 1 (see *Versioning*).
+- **v1, conversation memory (2026-10-08, task 16):** Q4 amended (per-node conversation memory
+  on the Studio), history + session summary in the `/ask` text, voice room assignment. No wire
+  change: the node sees the same events, so the version stays 1.
