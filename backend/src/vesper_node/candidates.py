@@ -308,6 +308,24 @@ def _explicit(sentence: str) -> _Explicit | None:
 # ---- heuristics ---------------------------------------------------------------------------
 
 _I = r"(?:i|i'm|im|i\s+am)"
+_WEEKDAY = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+_MONTH = (
+    r"(?:january|february|march|april|may|june|july|august|september|october|november|"
+    r"december)"
+)
+_ORDINAL = r"(?:\d{1,2}(?:st|nd|rd|th)?)"
+# An appointment needs a real date: "at 3" or "tonight" alone is not a durable event.
+_DATE_ANCHOR = (
+    rf"(?:on\s+(?:the\s+)?(?:{_WEEKDAY}|{_MONTH}|{_ORDINAL})|"
+    rf"next\s+(?:week|month|year|{_WEEKDAY}|{_MONTH})|this\s+(?:coming\s+)?{_WEEKDAY}|"
+    rf"tomorrow|in\s+{_MONTH}|{_MONTH}\s+{_ORDINAL}|{_WEEKDAY})"
+)
+# A question folded into the same sentence ("I like my coffee black what's the time").
+_QUESTION_INSIDE = re.compile(
+    r"\b(?:what|what's|whats|who|who's|when|where|where's|why|how|how's|which|whose|"
+    r"tell\s+me|(?:can|could|would|will|do|does|did|is|are)\s+(?:you|it|there|i))\b",
+    re.IGNORECASE,
+)
 _HEURISTICS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     # (pattern on the sentence, reason label, object must be non-deictic + non-transient)
     (
@@ -369,9 +387,7 @@ _HEURISTICS: tuple[tuple[re.Pattern[str], str, bool], ...] = (
             r"^(?:i|we)\s+(?:have|'ve\s+got|have\s+got)\s+(?:a|an|my|our)\s+"
             r"(?:[a-z'-]+\s+){0,2}(?:appointment|meeting|flight|interview|reservation|"
             r"surgery|checkup|check-up|party|wedding)\s+"
-            r"(?P<obj>(?:on|at|next|this\s+(?:coming\s+)?(?:monday|tuesday|wednesday|thursday|"
-            r"friday|saturday|sunday)|tomorrow|in\s+(?:january|february|march|april|may|june|"
-            r"july|august|september|october|november|december))\b.*)$",
+            rf"(?P<obj>{_DATE_ANCHOR}\b.*)$",
             re.IGNORECASE,
         ),
         "upcoming event",
@@ -407,8 +423,8 @@ def _heuristic(sentence: str) -> str | None:
             return None  # "remind me to check the oven in 10 minutes": a timer
         if strict and (_DEICTIC.search(obj) or _TRANSIENT.search(obj)):
             return None  # "I like that", "I love this weather"
-        if obj.lower().startswith(("when ", "how ", "what ", "where ", "the way ")):
-            return None
+        if _QUESTION_INSIDE.search(obj) or obj.lower().startswith("the way "):
+            return None  # "I like my coffee black what's the time", "I like how you …"
         return label
     return None
 

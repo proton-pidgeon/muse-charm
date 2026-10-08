@@ -140,6 +140,9 @@ HEURISTIC_CASES = [
     "please remind me to renew my passport next month",
     "I have a dentist appointment next Tuesday",
     "We have a flight on the 14th",
+    "I have a meeting on Friday",
+    "I have a job interview March 3rd",
+    "We have a reservation tomorrow",
     "My shoe size is 11",
 ]
 
@@ -224,6 +227,18 @@ NEVER_CASES = [
     "I'd like the lights off",
     "I sometimes like tea",
     "just kidding, I love broccoli",
+    # undated events: no date anchor
+    "I have a meeting at 3",
+    "I have a meeting at 3 on Friday",
+    "I have a meeting tonight",
+    "I have a meeting in the office",
+    "I have a dentist appointment on my calendar",
+    # a question folded into the sentence
+    "Hey Vesper I like my coffee black what's the time",
+    "I like jazz who is playing tonight",
+    "my favorite band is Radiohead when do they tour",
+    "remind me to call the plumber how late are they open",
+    "I prefer oat milk can you order some",
     # timers
     "remind me to check the oven in 10 minutes",
     "remind me to take the pizza out in five minutes",
