@@ -1,0 +1,14 @@
+# microWakeWord training venv (Python 3.11). Compile: uv pip compile requirements-mww.in -o requirements-mww.lock
+tensorflow>=2.18,<2.21
+numpy>=2.0
+pymicro-features
+audiomentations
+audio-metadata
+datasets<4  # 4.x decodes audio via torchcodec; 3.x uses soundfile+librosa
+mmap_ninja
+pyyaml
+webrtcvad-wheels
+ai-edge-litert
+scipy
+soundfile
+librosa
