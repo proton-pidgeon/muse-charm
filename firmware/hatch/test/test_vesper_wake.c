@@ -41,6 +41,8 @@ typedef struct {
     vw_verdict_t end;
     int chunks;            /* chunks recorded after the detection */
     int calls_before_onset;
+    bool pressed;          /* the listen ended because the talk button was pressed */
+    int cancels;           /* muse_hatch_turn_cancel() calls a press caused */
 } run_t;
 
 /*
@@ -50,7 +52,13 @@ typedef struct {
  * goes live (turn_begin, then the kept chunks, then each new one). Pre-wake
  * audio has negative ids and is never in the buffer.
  */
-static void run_wake(const float *levels, int n, const vw_config_t *cfg, float floor_db, run_t *r)
+/*
+ * press_at >= 0: the talk button is pressed while chunk press_at is being
+ * recorded. wake_record() checks press_waiting() at the top of every chunk and
+ * again right before each go_live(), so a press on the onset chunk ends the
+ * listen before any turn is begun.
+ */
+static void run_wake_press(const float *levels, int n, const vw_config_t *cfg, float floor_db, int press_at, run_t *r)
 {
     memset(r, 0, sizeof(*r));
     vw_listen_t l;
@@ -59,12 +67,23 @@ static void run_wake(const float *levels, int n, const vw_config_t *cfg, float f
     bool live = false;
     r->end = VW_WAITING;
     for (int i = 0; i < n; i++) {
+        if (press_at >= 0 && i > press_at) {   /* the check at the top of the chunk */
+            r->pressed = true;
+            r->cancels += live;
+            r->end = l.last;
+            return;
+        }
         buf[nbuf++] = i;   /* recorded locally */
         r->chunks++;
         vw_verdict_t v = vw_listen_chunk(&l, levels[i]);
         if (!live && vw_listen_may_contact_backend(&l) != (v == VW_ONSET || v == VW_SPEAKING ||
                                                             v == VW_END_SILENCE || v == VW_END_MAX)) {
             CHECK(!"may_contact_backend disagrees with the verdict");
+        }
+        if (v == VW_ONSET && press_at == i) {   /* the check right before go_live() */
+            r->pressed = true;
+            r->end = v;
+            return;
         }
         if (v == VW_ONSET) {
             CHECK(!live);
@@ -106,6 +125,38 @@ static void fill(float *lv, int from, int to, float db)
     for (int i = from; i < to; i++) {
         lv[i] = db;
     }
+}
+
+static void run_wake(const float *levels, int n, const vw_config_t *cfg, float floor_db, run_t *r)
+{
+    run_wake_press(levels, n, cfg, floor_db, -1, r);
+}
+
+/* A press during the listen: before the onset, or on the onset chunk itself, no turn is ever begun. */
+static void test_press_during_listen(void)
+{
+    vw_config_t c;
+    vw_config_default(&c);
+    static float lv[MAXC];
+    fill(lv, 0, MAXC, QUIET);
+    int speak_from = 60;
+    fill(lv, speak_from, speak_from + 100, SPEECH);
+    int onset = speak_from + c.onset_chunks - 1;   /* the chunk VW_ONSET comes on */
+    run_t r;
+    run_wake(lv, MAXC, &c, FLOOR, &r);
+    CHECK(r.begun == 1);   /* without a press this is a turn */
+
+    run_wake_press(lv, MAXC, &c, FLOOR, onset, &r);
+    CHECK(r.pressed && r.end == VW_ONSET);
+    CHECK(r.begun == 0 && r.backend_calls == 0 && r.cancels == 0);   /* no begin, so nothing to cancel */
+
+    for (int at = 0; at < onset; at++) {
+        run_wake_press(lv, MAXC, &c, FLOOR, at, &r);
+        CHECK(r.pressed && r.begun == 0 && r.backend_calls == 0 && r.cancels == 0);
+    }
+    /* After the onset the turn was live: the press cancels it (the press then records as its own turn). */
+    run_wake_press(lv, MAXC, &c, FLOOR, onset + 5, &r);
+    CHECK(r.pressed && r.begun == 1 && r.cancels == 1);
 }
 
 /* ---- Tests ---- */
@@ -454,6 +505,7 @@ int main(void)
     test_silent_wake_no_backend();
     test_wake_turn();
     test_verdict_sequence();
+    test_press_during_listen();
     test_floor();
     test_reblock();
     test_parse();

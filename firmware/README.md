@@ -898,6 +898,8 @@ unchanged and works alongside it. Task 21's custom "Hey Vesper" model will repla
   6. **No speech within 5 s:** back to idle with an empty caption. There is no chirp, nothing
      is sent and nothing is kept (`wake: no speech; back to idle (nothing sent)`).
   7. **A press during the listen** wins. The press is left queued and the listen is dropped.
+     `wake_record()` checks for a press at every chunk and again right before each `go_live()`,
+     so a press that lands on the onset chunk never begins a turn (host-tested).
      If speech had already started, the half-sent turn is cancelled. The press then records as
      a fresh press. The pre-roll ring is cleared first, so it never carries the old wake word.
 - **Privacy argument** (the task's constraint, "verify it in the design"):

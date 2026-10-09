@@ -122,14 +122,10 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
  #include "muse_wifi.h"
  #if CONFIG_MUSE_WATCHER_CAMERA
  #include "boards/watcher_camera.h"
-@@ -562,6 +566,49 @@
-         }
-     }
-     printf("@face.error unknown face \"%s\": boot idle listening thinking speaking error off happy\n", name);
-+    fflush(stdout);
-+}
-+
-+/*
+@@ -566,6 +570,55 @@
+ }
+ 
+ /*
 + * Vesper (task 20): ">wake" shows the wake word's state, ">wake=on|off"
 + * switches it, ">wake.threshold=0.65" sets WakeNet's detection threshold
 + * (0.50-0.99; out-of-range values are clamped, anything else refused). Both
@@ -139,10 +135,15 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
 +static void wake_command(const char *line)
 +{
 +#if CONFIG_VESPER_WAKE
-+    char json[320];
++    /* The serial task's stack is small (3.5 KB): the JSON goes on the heap, and the
++     * thresholds print as integers (no floating-point printf). */
 +    if (!strcmp(line, "wake")) {
-+        vesper_wakenet_status_json(json, sizeof(json));
-+        printf("@wake %s\n", json);
++        char *json = heap_caps_malloc(VESPER_WAKE_JSON_MAX, MUSE_BIG_CAPS);
++        if (json) {
++            vesper_wakenet_status_json(json, VESPER_WAKE_JSON_MAX);
++            printf("@wake %s\n", json);
++            free(json);
++        }
 +    } else if (!strncmp(line, "wake=", 5)) {
 +        bool on;
 +        if (!vw_parse_onoff(line + 5, &on)) {
@@ -155,12 +156,13 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
 +        int permille;
 +        vw_parse_t r = vw_parse_threshold(line + 15, &permille);
 +        if (r == VW_PARSE_INVALID) {
-+            printf("@wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now %.3f)\n",
-+                   vesper_wakenet_threshold() / 1000.0);
++            int now = vesper_wakenet_threshold();
++            printf("@wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now %d.%03d)\n", now / 1000,
++                   now % 1000);
 +        } else {
 +            bool saved = vesper_wakenet_set_threshold(permille);
-+            printf("@wake.threshold %.3f%s%s\n", permille / 1000.0, r == VW_PARSE_CLAMPED ? " (clamped to 0.50-0.99)" : "",
-+                   saved ? "" : " (not saved: NVS write failed)");
++            printf("@wake.threshold %d.%03d%s%s\n", permille / 1000, permille % 1000,
++                   r == VW_PARSE_CLAMPED ? " (clamped to 0.50-0.99)" : "", saved ? "" : " (not saved: NVS write failed)");
 +        }
 +    } else {
 +        printf("@wake.error unknown: >wake, >wake=on|off, >wake.threshold=<0.50-0.99>\n");
@@ -169,17 +171,32 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
 +    (void)line;
 +    printf("@wake.error this build has no wake word\n");
 +#endif
-     fflush(stdout);
- }
- 
-@@ -579,8 +626,16 @@
++    fflush(stdout);
++}
++
++/*
+  * Console-only commands; false for setup commands. Their buffers are taken
+  * per command: without PSRAM, static ones would hold internal RAM for good.
+  */
+@@ -573,14 +626,27 @@
+ {
+     if (!strcmp(line, "status")) {
+         size_t cap = 1024;   /* long SSID, host and VM names escaped: past 512 */
++#if CONFIG_VESPER_WAKE
++        /* Task 20: the wake word's JSON follows the device's in the same heap block. */
++        char *json = heap_caps_malloc(cap + VESPER_WAKE_JSON_MAX, MUSE_BIG_CAPS);
++#else
+         char *json = heap_caps_malloc(cap, MUSE_BIG_CAPS);
++#endif
+         if (json) {
+             /* Vesper (task 11): the claim state, presence only (never a credential or the code). */
              char vesper[256];
              vesper_node_status_json(vesper, sizeof(vesper));
              muse_ble_status_json(json, cap);
 +#if CONFIG_VESPER_WAKE
 +            /* Task 20: the wake word's state, settings and counts (never audio). */
-+            char wake[320];
-+            vesper_wakenet_status_json(wake, sizeof(wake));
++            char *wake = json + cap;
++            vesper_wakenet_status_json(wake, VESPER_WAKE_JSON_MAX);
 +            printf("@status {\"board\":\"%s\",\"chat\":%s,\"vesper\":%s,\"wake\":%s,\"device\":%s}\n",
 +                   muse_board->name, CHAT_OVER_SERIAL, vesper, wake, json);
 +#else
@@ -189,7 +206,7 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
              fflush(stdout);
              free(json);
          }
-@@ -598,6 +653,10 @@
+@@ -598,6 +664,10 @@
          fflush(stdout);
          return true;
      }
@@ -200,7 +217,7 @@ diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_inp
      bool reset = !strcmp(line, "power.reset");
      if (reset || !strcmp(line, "power")) {
          if (reset) {
-@@ -659,7 +718,8 @@
+@@ -659,7 +729,8 @@
   * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
   * two minutes asleep on battery would; 'w' rejoins), "claim.forget" forgets
   * the Vesper node credential so the node claims again, "ota.check" asks the
@@ -245,7 +262,7 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
   * The note being recorded (HOLD_NOTES), kept whole in case it can't go now.
   * Streaming, Hatch has had s_sent frames of it.
   */
-@@ -137,8 +154,33 @@
+@@ -137,7 +154,32 @@
  {
      s_pre_fill = 0;
      s_settle = SETTLE_CHUNKS;
@@ -253,8 +270,8 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
 +    s_woke = false;
 +    vesper_wakenet_reset();   /* nothing heard before this counts toward a wake */
 +#endif
- }
- 
++}
++
 +#if CONFIG_VESPER_WAKE
 +/* One clean idle chunk for the wake word: not while an announcement is said, nor its tail. */
 +static void wake_listen_idle(const int16_t *pcm)
@@ -273,12 +290,11 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
 +    if (vesper_wakenet_feed(pcm, MUSE_AUDIO_CHUNK, muse_audio_dbfs(pcm, MUSE_AUDIO_CHUNK))) {
 +        s_woke = true;
 +    }
-+}
+ }
 +#endif
-+
+ 
  /* One 20 ms idle read: feeds the pre-roll ring and the settings mic meter. */
  static void idle_capture(void)
- {
 @@ -154,6 +196,9 @@
          s_settle--;
          return;
@@ -289,7 +305,7 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
      pre_chunk_t *c = &s_pre[s_pre_next];
  #if MUSE_LOW_MEM
      c->start = s_pre_enc;
-@@ -779,8 +824,162 @@
+@@ -779,8 +824,168 @@
          return false;
      }
      return true;
@@ -362,6 +378,9 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
 +                keep(&st, s_rec + i, MUSE_AUDIO_CHUNK);
 +            }
 +            ESP_LOGI(TAG, "wake: speech after %.2fs", (double)l.chunks * MUSE_AUDIO_CHUNK / MUSE_AUDIO_RATE);
++            if (press_waiting()) {
++                return WAKE_PRESSED;   /* a press on the onset chunk: never begin a turn only to cancel it */
++            }
 +            if (muse_hatch_ready() && !s_held_count) {
 +                go_live();
 +            }
@@ -381,6 +400,9 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
 +        }
 +        bool tick = l.chunks % 5 == 0;
 +        if (tick && !s_live && !gave_up && !s_held_count && muse_hatch_ready()) {
++            if (press_waiting()) {
++                return WAKE_PRESSED;   /* likewise: the press goes first, no turn begun for it */
++            }
 +            ESP_LOGI(TAG, "Muse in reach: streaming the note so far");
 +            go_live();
 +        }
@@ -452,7 +474,7 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
  static void voice_task(void *arg)
  {
      bool pending_down = false;
-@@ -840,6 +1039,15 @@
+@@ -840,6 +1045,15 @@
              }
              /* The 20 ms read paces this loop. */
              idle_capture();
@@ -468,7 +490,7 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
              if (xQueueReceive(s_queue, &ev, 0) != pdTRUE) {
                  continue;
              }
-@@ -852,6 +1060,9 @@
+@@ -852,6 +1066,9 @@
          if (wake && !held_on_waking()) {
              continue;   /* a tap: it only woke Muse */
          }
@@ -478,7 +500,7 @@ diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voi
          muse_wifi_power(MUSE_WIFI_FULL);
          if (!can_record()) {
              pending_down = false;
-@@ -891,8 +1102,15 @@
+@@ -891,8 +1108,15 @@
          muse_state_set_caption("AUDIO INIT FAILED");
          return ESP_FAIL;
      }

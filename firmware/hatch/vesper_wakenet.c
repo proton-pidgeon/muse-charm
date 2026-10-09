@@ -294,12 +294,16 @@ static const char *state_name(void)
 
 int vesper_wakenet_status_json(char *out, size_t cap)
 {
+    /* Integers only: no floating-point printf on the serial task's small stack. */
+    int thr = atomic_load(&s_thr);
+    int fl = atomic_load(&s_floor_x10);
+    int fl_abs = fl < 0 ? -fl : fl;
     return snprintf(out, cap,
-                    "{\"state\":\"%s\",\"model\":\"%s\",\"threshold\":%.3f,\"chunk\":%d,\"wakes\":%u,\"turns\":%u,"
+                    "{\"state\":\"%s\",\"model\":\"%s\",\"threshold\":%d.%03d,\"chunk\":%d,\"wakes\":%u,\"turns\":%u,"
                     "\"no_speech\":%u,\"pressed\":%u,\"not_ready\":%u,\"detect_us\":{\"avg\":%u,\"max\":%u},"
-                    "\"floor_db\":%.1f,\"stack_free\":%u}",
-                    state_name(), CONFIG_VESPER_WAKE_MODEL, atomic_load(&s_thr) / 1000.0, s_chunk,
-                    atomic_load(&s_wakes), atomic_load(&s_turns), atomic_load(&s_no_speech), atomic_load(&s_pressed),
+                    "\"floor_db\":%s%d.%d,\"stack_free\":%u}",
+                    state_name(), CONFIG_VESPER_WAKE_MODEL, thr / 1000, thr % 1000, s_chunk, atomic_load(&s_wakes),
+                    atomic_load(&s_turns), atomic_load(&s_no_speech), atomic_load(&s_pressed),
                     atomic_load(&s_not_ready), atomic_load(&s_detect_avg_us), atomic_load(&s_detect_max_us),
-                    atomic_load(&s_floor_x10) / 10.0, atomic_load(&s_stack_free));
+                    fl < 0 ? "-" : "", fl_abs / 10, fl_abs % 10, atomic_load(&s_stack_free));
 }

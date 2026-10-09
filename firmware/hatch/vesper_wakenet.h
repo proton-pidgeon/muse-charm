@@ -67,7 +67,10 @@ int vesper_wakenet_threshold(void);
 
 /* {"state":"on|off|no_model|failed|disabled","model":"...","threshold":0.650,"chunk":512,
  *  "wakes":N,"turns":N,"no_speech":N,"pressed":N,"detect_us":{"avg":N,"max":N},"floor_db":-62.0}
- * for >status: counts and settings only, never audio or text. */
+ * for >status: counts and settings only, never audio or text. Integer formatting only (no
+ * floating-point printf: it runs on the serial task's small stack). VESPER_WAKE_JSON_MAX is
+ * room for the longest. */
+#define VESPER_WAKE_JSON_MAX 384
 int vesper_wakenet_status_json(char *out, size_t cap);
 
 #ifdef __cplusplus
