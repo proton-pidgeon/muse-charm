@@ -1,13 +1,15 @@
 /*
- * Wake word (task 20): the pure-C decisions around ESP-SR WakeNet, shared by
- * the firmware (muse_voice.c through vesper_wakenet.c) and the host tests.
+ * Wake word (tasks 20, 22): the pure-C decisions around the wake word
+ * detector, shared by the firmware (muse_voice.c through vesper_wakeword.c)
+ * and the host tests.
  *
  * Part of muse-charm (Vesper node firmware). Vesper-owned, written for this
  * project; not derived from the Meta muse-gadget-sdk sources.
  *
- * WakeNet itself (the "Computer" model, on the device only) answers one
- * question: was the wake word just said? Everything after that is decided
- * here, so that it can be tested without a board:
+ * The detector (since task 22 the "Hey Vesper" microWakeWord model,
+ * vesper_wakeword_engine.cc; task 20's ESP-SR WakeNet "Computer" is gone)
+ * answers one question: was the wake word just said? Everything after that is
+ * decided here, so that it can be tested without a board:
  *
  *   - vw_floor_*    the room's noise floor, tracked over the idle mic feed,
  *                   so "speech" means "louder than this room";
@@ -15,9 +17,8 @@
  *                   locally and may contact the backend only once speech
  *                   starts (onset), ends on trailing silence or the length
  *                   cap, and gives up quietly if nobody speaks;
- *   - vw_reblock_*  the mic's 20 ms chunks regrouped into WakeNet's own
- *                   chunk size (whatever get_samp_chunksize says);
- *   - vw_parse_*    the console's >wake=on|off and >wake.threshold=0.65.
+ *   - vw_parse_*    the console's >wake=on|off and >wake.threshold=0.65 (the
+ *                   model's probability cutoff).
  *
  * The privacy and no-phantom-turn rules are properties of vw_listen_t:
  *
@@ -115,25 +116,10 @@ bool vw_listen_may_contact_backend(const vw_listen_t *l);
  * audio includes; -1 before onset. Chunks before it are dropped unsent. */
 int vw_listen_lead(const vw_listen_t *l);
 
-/* ---- WakeNet's chunk size ---- */
-
-typedef struct {
-    int16_t *buf;   /* the caller's, `size` samples */
-    size_t size;
-    size_t fill;
-} vw_reblock_t;
-
-void vw_reblock_init(vw_reblock_t *r, int16_t *buf, size_t size);
-/* Takes samples from in until the block is full or in runs out; returns how many it took. */
-size_t vw_reblock_push(vw_reblock_t *r, const int16_t *in, size_t n);
-bool vw_reblock_full(const vw_reblock_t *r);
-/* Empties the block (after it was handed to WakeNet, or to drop a partial one). */
-void vw_reblock_clear(vw_reblock_t *r);
-
 /* ---- Settings ---- */
 
-#define VW_THRESHOLD_MIN 500    /* permille: 0.50; below this WakeNet fires on almost anything */
-#define VW_THRESHOLD_MAX 990    /* 0.99; above this it hardly fires at all */
+#define VW_THRESHOLD_MIN 500    /* permille: 0.50; the model's test curve starts there (0.74 false wakes/h) */
+#define VW_THRESHOLD_MAX 990    /* 0.99; above this it hardly fires at all (FRR 26 % at 0.99) */
 
 typedef enum {
     VW_PARSE_OK = 0,

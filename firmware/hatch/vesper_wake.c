@@ -1,5 +1,5 @@
 /*
- * Wake word (task 20): see vesper_wake.h.
+ * Wake word (tasks 20, 22): see vesper_wake.h.
  *
  * Part of muse-charm (Vesper node firmware). Vesper-owned, written for this
  * project; not derived from the Meta muse-gadget-sdk sources.
@@ -135,36 +135,6 @@ bool vw_listen_may_contact_backend(const vw_listen_t *l)
 int vw_listen_lead(const vw_listen_t *l)
 {
     return l->lead;
-}
-
-/* ---- WakeNet's chunk size ---- */
-
-void vw_reblock_init(vw_reblock_t *r, int16_t *buf, size_t size)
-{
-    r->buf = buf;
-    r->size = size;
-    r->fill = 0;
-}
-
-size_t vw_reblock_push(vw_reblock_t *r, const int16_t *in, size_t n)
-{
-    size_t room = r->size - r->fill;
-    size_t take = n < room ? n : room;
-    if (take) {
-        memcpy(r->buf + r->fill, in, take * sizeof(int16_t));
-        r->fill += take;
-    }
-    return take;
-}
-
-bool vw_reblock_full(const vw_reblock_t *r)
-{
-    return r->size > 0 && r->fill == r->size;
-}
-
-void vw_reblock_clear(vw_reblock_t *r)
-{
-    r->fill = 0;
 }
 
 /* ---- Settings ---- */

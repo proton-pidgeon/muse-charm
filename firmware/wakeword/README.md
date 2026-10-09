@@ -5,9 +5,10 @@
 > < 5 %), **0.22 false accepts per hour** on 13.58 h of held-out background (bar < 1 / h),
 > **60,840 bytes** (bar ≤ 65,536). It is run it14 with seed 22, the 21st of 26 training runs
 > (see *Iteration history*), picked by the validation-only rule in `quality-bars.md`
-> (addendum #2), not by the test. Swapping it into the firmware is the separate step after
-> Kevin hears the numbers (task step 6). Real voices and the board's own microphone are still
-> untested; see the caveat at the end of `quality-bars.md`.
+> (addendum #2), not by the test. **Since firmware 1.0.4 (task 22) it is the board's wake word**,
+> replacing task 20's WakeNet "Computer" (see *In the firmware* below and `../README.md`, *Wake
+> word*). Real voices and the board's own microphone are still untested; see the caveat at the
+> end of `quality-bars.md`.
 
 | File | What |
 |---|---|
@@ -16,7 +17,7 @@
 | `quality-bars.md` | the bars + evaluation protocol, committed **before** the first training run, plus the two dated addenda to the selection rule |
 | `train/` | the full recipe (scripts, configs, pinned locks, README with one command per stage) |
 
-## Integration note (for the firmware swap, task step 6)
+## Integration note (the firmware contract; implemented in task 22)
 
 | Item | Value |
 |---|---|
@@ -32,6 +33,39 @@
 
 The architecture (upstream mixednet, stride 3) is unchanged from the first run, so the
 firmware-side contract above is the same for every model in the history; only the cutoff moved.
+
+## In the firmware (task 22, firmware 1.0.4)
+
+The contract above is implemented in `../hatch/` and linked into the AIPI image by SDK patch
+`0008` (details, memory and CPU numbers in `../README.md`, *Wake word*):
+
+| Piece | Where |
+|---|---|
+| Frontend | `esphome/esp-micro-speech-features` 1.2.3, the TFLM microfrontend C code, with the settings in the table above (`hatch/vesper_wakeword_engine.cc`, `start_frontend`) |
+| uint16 to int8 | `vm_quant_*` (`hatch/vesper_mww.c`): a 1,024-entry table built at boot from the model's own input scale and zero point with `eval.py`'s formula, rounded half to even |
+| Stride, window, cutoff, cooldowns | `vm_stack_*`, `vm_detect_*` (`hatch/vesper_mww.c`): `eval.py`'s `count_detections()` step by step (host-fuzzed against a port of it) |
+| Model | TFLite Micro, `espressif/esp-tflite-micro` 1.4.1 with `esp-nn` 1.4.1, the 13 ops above, 20 resource variables, arena in PSRAM; a fresh interpreter after every reset, as `eval.py` scores each clip |
+| Threshold | `CONFIG_VESPER_WAKE_THRESHOLD=650` (this operating point), `>wake.threshold=` on the serial console, NVS `muse:wake_hv_thr` |
+
+**Host check** (`make -C firmware wake-host-check`, `host/check.py`): the firmware's own engine
+source, built on the Mac against TFLite Micro's reference kernels, fed 20 ms chunks as on the
+board, versus this directory's training/eval pipeline (pymicro_features + LiteRT) on 300 test
+positives, 300 general-speech test clips (each padded with 1 s of silence before, 0.5 s after)
+and 10 minutes of AudioSet eval shard 06 as one stream:
+
+| Check | Result |
+|---|---|
+| int8 model inputs (the feature pipeline) | **identical** for every inference (51,732 clip inferences, 19,999 stream inferences) |
+| Detections | **identical**: 299 / 300 positives and 0 / 300 general speech on both sides; 0 = 0 in the 10 min stream |
+| uint8 outputs vs LiteRT's reference kernels | 51,726 of 51,732 identical (max difference 7 of 255); stream 19,999 of 19,999 |
+| uint8 outputs vs `eval.py`'s XNNPACK run | 50,812 of 51,732 identical (max difference 8); stream 19,855 of 19,999 (max 2) |
+| Tensor arena used | 24,608 B on the host with reference kernels; the S3 adds esp-nn conv scratch (≤ ~7.9 KB), so the boot log's `arena X of 40960 B` is the real number |
+
+The few output differences are integer rounding inside the kernels (TFLite Micro, LiteRT's
+reference and XNNPACK each round some intermediate steps differently); none changed a verdict.
+The device runs Espressif's esp-nn versions of the conv/depthwise/FC kernels, which are meant to
+match the TFLite Micro reference bit for bit but can't be run on the host. The full report is
+`host/check-result.json`.
 
 ## Quality bars (fixed before training; see `quality-bars.md`)
 

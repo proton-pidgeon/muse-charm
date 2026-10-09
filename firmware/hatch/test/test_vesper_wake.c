@@ -1,6 +1,6 @@
 /*
  * Host tests for firmware/hatch/vesper_wake.c (the wake word's decisions,
- * task 20). Run: make -C firmware test
+ * tasks 20 and 22). Run: make -C firmware test
  *
  * The privacy and no-phantom-turn properties are tested on a small model of
  * the firmware's wake listen (run_wake below, the same steps muse_voice.c's
@@ -370,48 +370,6 @@ static void test_floor(void)
     CHECK(f.db == VW_FLOOR_MAX_DB);
 }
 
-static void test_reblock(void)
-{
-    /* 320-sample mic chunks into 512-sample WakeNet chunks (and other sizes). */
-    const size_t sizes[] = { 512, 480, 320, 160, 1, 1024 };
-    for (size_t s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++) {
-        size_t size = sizes[s];
-        int16_t *blk = calloc(size, sizeof(int16_t));
-        vw_reblock_t r;
-        vw_reblock_init(&r, blk, size);
-        int16_t mic[320];
-        int next_in = 0, next_out = 0, blocks = 0;
-        for (int chunk = 0; chunk < 64; chunk++) {
-            for (int i = 0; i < 320; i++) {
-                mic[i] = (int16_t)(next_in++ & 0x7fff);
-            }
-            size_t off = 0;
-            while (off < 320) {
-                size_t took = vw_reblock_push(&r, mic + off, 320 - off);
-                off += took;
-                if (vw_reblock_full(&r)) {
-                    for (size_t i = 0; i < size; i++) {
-                        CHECK(blk[i] == (int16_t)(next_out++ & 0x7fff));
-                    }
-                    blocks++;
-                    vw_reblock_clear(&r);
-                } else {
-                    CHECK(off == 320);   /* only stops early when the block is full */
-                }
-            }
-        }
-        CHECK(blocks == (int)(64 * 320 / size));
-        CHECK(r.fill == (64 * 320) % size);
-        CHECK(vw_reblock_push(&r, mic, 0) == 0);
-        free(blk);
-    }
-    vw_reblock_t z;
-    vw_reblock_init(&z, NULL, 0);
-    CHECK(!vw_reblock_full(&z));
-    int16_t one = 1;
-    CHECK(vw_reblock_push(&z, &one, 1) == 0);
-}
-
 static void test_parse(void)
 {
     int pm = -1;
@@ -507,7 +465,6 @@ int main(void)
     test_verdict_sequence();
     test_press_during_listen();
     test_floor();
-    test_reblock();
     test_parse();
     test_fuzz();
     if (s_fail) {
