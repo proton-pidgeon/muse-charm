@@ -9,8 +9,9 @@ protocol (`../quality-bars.md`).
 
 Everything heavy (venvs, datasets, generated audio, features, checkpoints) lives **outside the
 repo**, under `$WW_ROOT`, which defaults to `~/builds/muse-charm/scratch/wakeword-21`. The
-footprint is about 27 GB, mostly microWakeWord's precomputed negative features. Nothing under
-`$WW_ROOT` is committed.
+footprint is about 30 GB: ~16 GB of microWakeWord's precomputed negative features, ~6 GB of
+generated TTS audio, ~7 GB of our features, and ~3 GB of venvs. Nothing under `$WW_ROOT` is
+committed.
 
 ## One command per stage
 
@@ -20,15 +21,20 @@ Approximate wall time on an M4 Max is in brackets.
 ```sh
 bash firmware/wakeword/train/01_setup.sh              # pinned sources + 2 uv venvs + Piper checkpoint   [3 min]
 bash firmware/wakeword/train/02_download.sh           # RIRs, noise, negative features, held-out background [20-40 min, ~25 GB]
-bash firmware/wakeword/train/03_generate.sh           # Piper TTS: positives, hard negatives, general speech  [~40 min, MPS]
-bash firmware/wakeword/train/04_features.sh           # augment + spectrogram RaggedMmaps (+ AudioSet bal_train negatives) [~15 min]
-bash firmware/wakeword/train/05_train.sh final        # train (seeded) + export int8 streaming tflite        [~15 min, CPU]
+bash firmware/wakeword/train/03_generate.sh           # Piper TTS: positives, hard negatives, general speech  [~2.5 h; lt on MPS, onnx voices on CPU]
+bash firmware/wakeword/train/04_features.sh           # augment + spectrogram RaggedMmaps (+ AudioSet bal_train 03-37 negatives) [~45 min]
+bash firmware/wakeword/train/05_train.sh final        # train (seeded, = iterations/it8.yaml) + export int8 streaming tflite [~15 min, CPU]
 bash firmware/wakeword/train/06_eval.sh "$HOME/builds/muse-charm/scratch/wakeword-21/runs/final/hey-vesper.tflite" /tmp/metrics.json final
 ```
 
-To reproduce an earlier iteration, pass its config: `05_train.sh it2 firmware/wakeword/train/iterations/it2.yaml`.
-The data-side changes between iterations (counts, repeats, stored slides) are in the README's
-iteration history. The committed scripts produce the **final** iteration's data.
+`training_parameters.yaml` is `iterations/it8.yaml`, the shipped run, and the default
+stages build exactly its data. To re-run another iteration, pass its config
+(`05_train.sh it12 firmware/wakeword/train/iterations/it12.yaml`) and seed (`WW_SEED=22`).
+Iterations it10-it13 also had two opt-in data additions: `04_features.sh audioset_unbal`, and
+CHiME-6 array u02, kept via `rm -rf $WW_ROOT/data/negative_datasets/dinner_party &&
+WW_KEEP_CHIME_U02=1 02_download.sh negatives`. Earlier iterations used less TTS data (see the
+COUNTS comments in `generate.py` and `../README.md`). Those exact data states are documented,
+not re-buildable by flag.
 
 To re-check the shipped model at its frozen operating point (no re-selection):
 
@@ -51,17 +57,21 @@ bash firmware/wakeword/train/06_eval.sh firmware/wakeword/hey-vesper.tflite /tmp
 | `05_train.sh` → `seeded_train.py`, `export.py`, `training_parameters.yaml` | 5 | upstream `microwakeword.model_train_eval` (mixednet, stride 3) with fixed seeds; export via upstream's converter to the int8-in/uint8-out streaming tflite |
 | `06_eval.sh` → `eval.py` | 6 | the frozen protocol: validation-only operating point, test FRR/FA/h, hard-negative table |
 | `model_info.py` | - | op list + tensor-arena estimate for a tflite |
-| `iterations/itN.yaml` | - | the training config of each iteration (the final one equals `training_parameters.yaml`) |
+| `iterations/itN.yaml` | - | the training config of each iteration (`it8.yaml` = `training_parameters.yaml`, the shipped run; `it11`-`it13` were run with several `WW_SEED`s) |
 
 ## Determinism
 
-Seeds are fixed for: the speaker splits and per-batch TTS settings (`generate.py`, seed 21),
-torch synthesis noise (per-batch `torch.manual_seed`), augmentation (`random`/`numpy` seeded per
-feature set), batch sampling and weight init (`seeded_train.py`: `tf.keras.utils.set_random_seed(21)`),
-and the eval-set augmentation. Two sources stay non-deterministic: MPS float kernels in TTS, and
-the order of CPU float reductions in TF. A rerun gives a statistically equivalent model, not a
-byte-identical one. The committed `hey-vesper.tflite` + `metrics.json` are the reference
-artifacts.
+Seeds are fixed for: the speaker splits, voice choice and synthesis settings per clip
+(`generate.py`, seed 21), torch synthesis noise for the LibriTTS-R generator (per-batch
+`torch.manual_seed`), augmentation (`random`/`numpy` seeded per feature set), batch sampling and
+weight init (`seeded_train.py`: `tf.keras.utils.set_random_seed`, `WW_SEED`, default 21), and the
+eval-set augmentation (cached in `$WW_FEAT/eval/` on the first eval run). Three sources stay
+non-deterministic: the onnxruntime noise inside stock Piper voices (so a few `xl` clips land on
+either side of the 2.6 s length filter on a rerun), MPS float kernels, and the order of TF CPU
+float reductions. A rerun gives a statistically equivalent model, not a byte-identical one. Seed
+to seed, the validation FRR of one config moved over 5.2-7.3 % (`it11`), so treat single-run
+differences under ~2 points as noise. The committed `hey-vesper.tflite` + `metrics.json` are
+the reference artifacts.
 
 ## Licences of what gets downloaded
 

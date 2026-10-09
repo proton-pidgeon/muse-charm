@@ -1,4 +1,4 @@
-# it8: it7 + AudioSet bal_train negatives 03-37 (was 03-12), their weight 5 -> 8.
+# it9: it8 + dinner-party (CHiME-6 train) sampling weight 10 -> 16.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -39,8 +39,8 @@ features:
     truth: false
     truncation_strategy: random
     type: mmap
-  - features_dir: $WW_DATA/negative_datasets/dinner_party
-    sampling_weight: 10.0
+  - features_dir: $WW_DATA/negative_datasets/dinner_party   # it9: weight 10 -> 16
+    sampling_weight: 16.0
     penalty_weight: 1.0
     truth: false
     truncation_strategy: random

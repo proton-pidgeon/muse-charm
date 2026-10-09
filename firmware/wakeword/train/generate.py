@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stage 3: synthesise the "Hey Vesper" dataset with Piper TTS (runs in venv-piper).
 
-Three TTS sources, split by SPEAKER/VOICE so no held-out voice is ever trained on:
+TTS sources, split by SPEAKER/VOICE so no held-out voice is ever trained on:
 
   lt    the multi-speaker LibriTTS-R generator (en_US-libritts_r-medium.pt, 904 speakers).
         Speakers 0..799 are shuffled with a fixed seed: 80 -> test, 60 -> val, 660 -> train.
@@ -9,6 +9,10 @@ Three TTS sources, split by SPEAKER/VOICE so no held-out voice is ever trained o
   onnx  stock Piper voices (.onnx). Whole single-speaker voices are assigned to train or test;
         multi-speaker voices (vctk, l2arctic, arctic, aru) are split by speaker id.
   xl    (train only, it5) non-English stock Piper voices speaking English phonemes (XL_VOICES).
+  xl2   (train only, it7) ~35 more non-English voices, same method (XL2_VOICES).
+  lh    (train only, it7) en_US-libritts-high: a DIFFERENT Piper model of the same LibriTTS
+        speakers (same speaker-index order as the generator); only the generator's TRAIN
+        speaker indices are used, so held-out LibriTTS speakers stay unseen.
 
 Synthesis settings (speed = length_scale, noise_scale, noise_w) also differ: test uses values
 that are never used for train/val (see SETTINGS).
@@ -91,10 +95,12 @@ SETTINGS = {
 }
 
 # --- per-split counts (scaled by --scale) ----------------------------------------------------
-COUNTS = {  # kind -> split -> (n_lt, n_onnx, n_xl)  [hardneg counts are PER PHRASE]
-    "pos": {"train": (40000, 15000, 15000), "val": (1000, 500, 0), "test": (1500, 1500, 0)},  # it3: lt/onnx (16000, 6000) -> (40000, 15000); it5: + xl
-    "hardneg": {"train": (400, 150, 100), "val": (25, 10, 0), "test": (40, 40, 0)},
-    "general": {"train": (3000, 1500, 1000), "val": (150, 50, 0), "test": (300, 300, 0)},
+SOURCES = ("lt", "onnx", "xl", "xl2", "lh")
+COUNTS = {  # kind -> split -> per-source counts in SOURCES order  [hardneg counts are PER PHRASE]
+    # it1-2: train (16000, 6000); it3: (40000, 15000); it5: + xl; it7: + xl2, lh
+    "pos": {"train": (40000, 15000, 15000, 15000, 15000), "val": (1000, 500, 0, 0, 0), "test": (1500, 1500, 0, 0, 0)},
+    "hardneg": {"train": (400, 150, 100, 100, 100), "val": (25, 10, 0, 0, 0), "test": (40, 40, 0, 0, 0)},
+    "general": {"train": (3000, 1500, 1000, 1000, 1000), "val": (150, 50, 0, 0, 0), "test": (300, 300, 0, 0, 0)},
 }
 
 # it5: "xl" = non-English Piper voices fed ENGLISH (en-us espeak) phonemes, i.e. accented English
@@ -109,6 +115,19 @@ XL_VOICES = [
     "hi_IN-priyamvada-medium", "cy_GB-bu_tts-medium", "da_DK-talesyntese-medium",
     "cs_CZ-kasandra-medium", "hu_HU-anna-medium",
 ]
+XL2_VOICES = [
+    "ca_ES-upc_ona-medium", "cs_CZ-jirka-medium", "de_DE-kerstin-low", "de_DE-ramona-low",
+    "de_DE-karlsson-low", "de_DE-pavoque-low", "el_GR-rapunzelina-medium", "es_AR-daniela-high",
+    "es_MX-claude-high", "fi_FI-harri-medium", "fr_FR-gilles-low", "hu_HU-imre-medium",
+    "hu_HU-berta-medium", "is_IS-bui-medium", "is_IS-salka-medium", "it_IT-riccardo-x_low",
+    "nl_BE-nathalie-medium", "nl_BE-rdh-medium", "nl_NL-ronnie-medium", "pl_PL-mc_speech-medium",
+    "ro_RO-mihai-medium", "ru_RU-dmitri-medium", "ru_RU-ruslan-medium", "sk_SK-lili-medium",
+    "sl_SI-artur-medium", "sv_SE-lisa-medium", "sv_SE-alma-medium", "bn_BD-google-medium",
+    "ne_NP-google-medium", "mr_IN-google-medium", "et_EE-news-medium", "no_NO-talesyntese-medium",
+    "lb_LU-marylux-medium", "lv_LV-aivars-medium", "hi_IN-rohan-medium",
+]
+LH_VOICE = "en_US-libritts-high"
+
 # English phonemes some foreign voices lack -> closest sequences they have
 XL_FALLBACK = {"ɚ": ["ə", "ɹ"], "ɝ": ["ɜ", "ɹ"], "ɹ": ["r"], "ᵻ": ["ɪ"], "ɾ": ["t"], "ɐ": ["a"],
                "ʌ": ["a"], "ɜ": ["ə"], "ɪ": ["i"], "ʊ": ["u"], "æ": ["a"], "ɑ": ["a"], "ɔ": ["o"]}
@@ -269,7 +288,8 @@ def xl_phoneme_ids(id_map, phonemes):
     return ids
 
 
-def gen_xl(split, kind, n_total, outdir, writer):
+def gen_xl(split, kind, n_total, outdir, writer, voices=None, src="xl"):
+    voices = XL_VOICES if voices is None else voices
     if n_total <= 0:
         return
     from piper import PiperVoice, SynthesisConfig
@@ -285,14 +305,14 @@ def gen_xl(split, kind, n_total, outdir, writer):
     for text, n in targets:
         tag = "" if text is None else f"h{texts.index(text):02d}_"
         for idx in range(n):
-            rng = random.Random(f"{SEED}-{split}-{kind}-xl-{tag}{idx}")  # per-sample: resumable
-            voice = XL_VOICES[rng.randrange(len(XL_VOICES))]
+            rng = random.Random(f"{SEED}-{split}-{kind}-{src}-{tag}{idx}")  # per-sample: resumable
+            voice = voices[rng.randrange(len(voices))]
             length = rng.choice(st["length_scales"])
             noise = rng.choice(st["noise_scales"])
             noise_w = rng.choice(st["noise_ws"])
             t = text if text is not None else rng.choice(texts)
             spk_draw = rng.random()
-            p = outdir / f"xl_{tag}{idx:06d}.wav"
+            p = outdir / f"{src}_{tag}{idx:06d}.wav"
             if p.exists():
                 continue
             if voice not in loaded:
@@ -314,16 +334,52 @@ def gen_xl(split, kind, n_total, outdir, writer):
             writer.writerow([p.name, t, voice, sid if sid is not None else 0, "", length, noise, noise_w])
 
 
+def gen_xl2(split, kind, n_total, outdir, writer):
+    gen_xl(split, kind, n_total, outdir, writer, voices=XL2_VOICES, src="xl2")
+
+
+def gen_lh(split, kind, n_total, outdir, writer):
+    """libritts-high (onnx), restricted to the generator's speaker indices for this split."""
+    from piper import PiperVoice, SynthesisConfig
+
+    texts = texts_for(kind)
+    spk = LT_SPLIT[split]
+    st = SETTINGS[split]
+    per_text = kind == "hardneg"
+    targets = [(t, n_total) for t in texts] if per_text else [(None, n_total)]
+    pv = None
+    for text, n in targets:
+        tag = "" if text is None else f"h{texts.index(text):02d}_"
+        for idx in range(n):
+            rng = random.Random(f"{SEED}-{split}-{kind}-lh-{tag}{idx}")
+            sid = rng.choice(spk)
+            length = rng.choice(st["length_scales"])
+            noise = rng.choice(st["noise_scales"])
+            noise_w = rng.choice(st["noise_ws"])
+            t = text if text is not None else rng.choice(texts)
+            p = outdir / f"lh_{tag}{idx:06d}.wav"
+            if p.exists():
+                continue
+            if pv is None:
+                pv = PiperVoice.load(str(ensure_voice(LH_VOICE)))
+            cfg = SynthesisConfig(speaker_id=sid, length_scale=length, noise_scale=noise, noise_w_scale=noise_w)
+            with wave.open(str(p), "wb") as w:
+                pv.synthesize_wav(t, wav_file=w, syn_config=cfg)
+            writer.writerow([p.name, t, LH_VOICE, sid, "", length, noise, noise_w])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("split", choices=["train", "val", "test"])
     ap.add_argument("kind", choices=["pos", "hardneg", "general"])
     ap.add_argument("--scale", type=float, default=1.0, help="multiply the COUNTS table")
-    ap.add_argument("--only", choices=["lt", "onnx", "xl"], default=None)
+    ap.add_argument("--only", choices=list(SOURCES), default=None)
     a = ap.parse_args()
-    n_lt, n_onnx, n_xl = (int(round(c * a.scale)) if c else 0 for c in COUNTS[a.kind][a.split])
+    counts = [int(round(c * a.scale)) if c else 0 for c in COUNTS[a.kind][a.split]]
+    fns = {"lt": gen_lt, "onnx": gen_onnx, "xl": gen_xl, "xl2": gen_xl2, "lh": gen_lh}
     base = GEN / a.kind / a.split
-    for src, n, fn in (("lt", n_lt, gen_lt), ("onnx", n_onnx, gen_onnx), ("xl", n_xl, gen_xl)):
+    for src, n in zip(SOURCES, counts):
+        fn = fns[src]
         if n <= 0:
             continue
         if a.only and a.only != src:

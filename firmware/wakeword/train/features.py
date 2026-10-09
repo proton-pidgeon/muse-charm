@@ -12,7 +12,8 @@ $WW_FEAT, in the layout microWakeWord's FeatureHandler expects:
 
 Test-split features are NOT built here; eval.py builds them with the test-only augmentation.
 
-Usage: features.py [positives] [hardneg] [audioset_neg] [val_ambient]   (default: all)
+Usage: features.py [positives] [hardneg] [audioset_neg] [val_ambient] [audioset_unbal]
+  default: the first four (the shipped model's data); audioset_unbal is opt-in (it10-it13).
 """
 
 import os
@@ -105,7 +106,8 @@ def hardneg():
 
 # AudioSet *bal_train* shards turned straight into negative features (training only). Shard 02 is
 # the test-augmentation noise pool and is never used here; the evaluation split is never used.
-AUDIOSET_NEG_SHARDS = [f"{i:02d}" for i in range(3, 13)]
+AUDIOSET_NEG_SHARDS = [f"{i:02d}" for i in range(3, 38)]  # it2-it7: 03-12; it8: 03-37 (all bal_train but 02)
+AUDIOSET_UNBAL_SHARDS = [f"{i:03d}" for i in range(0, 6)]  # opt-in step audioset_unbal (it10-it13 only)
 
 
 def audioset_neg():
@@ -132,6 +134,20 @@ def audioset_neg():
     build(FEAT / "audioset_neg" / "training" / "noise_train_pool_mmap", pool_specs())
 
 
+def audioset_unbal():
+    """OPT-IN (not part of the shipped model's data; iterations it10-it13 had it): AudioSet
+    unbal_train 000-005 (~2,300 clips each) as extra negatives, in the same audioset_neg dir."""
+    import download_data
+    from microwakeword.audio.audio_utils import generate_features_for_clip
+
+    def unbal_specs(shard):
+        for _, pcm in download_data.audioset_shard_clips("unbal_train", shard):
+            yield to_u16(generate_features_for_clip(pcm, step_ms=10))
+
+    for shard in AUDIOSET_UNBAL_SHARDS:
+        build(FEAT / "audioset_neg" / "training" / f"audioset_unbal_train_{shard}_mmap", unbal_specs(shard))
+
+
 def val_ambient():
     link = FEAT / "val_ambient" / "validation_ambient" / "chime6_dev_eval_mmap"
     if not link.exists():
@@ -140,9 +156,11 @@ def val_ambient():
     print("val_ambient ->", link.resolve(), flush=True)
 
 
-STEPS = {"positives": positives, "hardneg": hardneg, "audioset_neg": audioset_neg, "val_ambient": val_ambient}
+STEPS = {"positives": positives, "hardneg": hardneg, "audioset_neg": audioset_neg, "val_ambient": val_ambient,
+         "audioset_unbal": audioset_unbal}
+DEFAULT_STEPS = ["positives", "hardneg", "audioset_neg", "val_ambient"]  # = the shipped model's data (it8)
 
 if __name__ == "__main__":
-    for s in sys.argv[1:] or list(STEPS):
+    for s in sys.argv[1:] or DEFAULT_STEPS:
         STEPS[s]()
     print("features done", flush=True)

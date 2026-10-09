@@ -182,14 +182,14 @@ def noise():
         log("noise_train fma", n)
 
 
-# Disk budget (~30 GB for the whole recipe): drop two mmaps that duplicate another one's content
-# from a different microphone (VOiCES close-talk lavalier = same utterances as the far one we keep;
-# CHiME-6 array u02 = same sessions as array u01). The VOiCES "mid" copy is pruned for the same reason.
+# Disk budget (~30 GB for the whole recipe): drop mmaps that duplicate another one's content from a
+# different microphone (VOiCES close-talk and mid lavalier = same utterances as the far one we keep;
+# CHiME-6 array u02 = same sessions as array u01). Iterations it10-it13 kept u02
+# (WW_KEEP_CHIME_U02=1, with dinner_party re-extracted); the shipped model (it8) did not.
 PRUNE = [
     "speech/training/voices_lav_clo_training_mmap",
     "speech/training/voices_lav_mid_training_mmap",
-    "dinner_party/training/chime6_train_u02_ch1_mmap",
-]
+] + ([] if os.environ.get("WW_KEEP_CHIME_U02") == "1" else ["dinner_party/training/chime6_train_u02_ch1_mmap"])
 
 
 def negatives():

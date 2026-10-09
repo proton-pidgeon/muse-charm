@@ -1,4 +1,5 @@
-# it8: it7 + AudioSet bal_train negatives 03-37 (was 03-12), their weight 5 -> 8.
+# it13: it12 + CHiME-6 train (dinner_party) sampling weight 10 -> 4. The validation ambient is CHiME-6
+#       dev/eval: training hard on CHiME-6 train makes the validation FA/h optimistic.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -12,14 +13,14 @@ features:
     penalty_weight: 1.0
     truth: true
     truncation_strategy: fixed_right_cutoff
-    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     type: mmap
   - features_dir: $WW_FEAT/hardneg          # ours: TTS near-homophones + general TTS speech,
     sampling_weight: 3.0                     # it2: aligned exactly like the positives (phrase end; it4: 6 -> 3
     penalty_weight: 1.0                      # 0-9 frames before the window end)
     truth: false
     truncation_strategy: fixed_right_cutoff
-    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     type: mmap
   - features_dir: $WW_FEAT/hardneg          # ... and at random positions
     sampling_weight: 2.0
@@ -39,8 +40,8 @@ features:
     truth: false
     truncation_strategy: random
     type: mmap
-  - features_dir: $WW_DATA/negative_datasets/dinner_party
-    sampling_weight: 10.0
+  - features_dir: $WW_DATA/negative_datasets/dinner_party   # it13: weight 10 -> 4
+    sampling_weight: 4.0
     penalty_weight: 1.0
     truth: false
     truncation_strategy: random

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 5: train the mixednet model (upstream microwakeword.model_train_eval, CPU TensorFlow),
 # then export the int8 streaming tflite (export.py).
-# Usage: 05_train.sh <run-name> [training_parameters.yaml]
+# Usage: [WW_SEED=21] 05_train.sh <run-name> [training_parameters.yaml]
 # Output: $WW_RUNS/<run>/model/ (checkpoints, best_weights) and $WW_RUNS/<run>/hey-vesper.tflite
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"

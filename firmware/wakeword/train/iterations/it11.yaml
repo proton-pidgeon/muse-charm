@@ -1,4 +1,4 @@
-# it8: it7 + AudioSet bal_train negatives 03-37 (was 03-12), their weight 5 -> 8.
+# it11 (seeds 22-24): it8 training config on the it10 data (unbal AudioSet + CHiME u02); only WW_SEED differs.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.

@@ -1,4 +1,4 @@
-# it8: it7 + AudioSet bal_train negatives 03-37 (was 03-12), their weight 5 -> 8.
+# it10: it8 + AudioSet unbal_train 000-005 negatives (audioset_neg weight 8 -> 10) + CHiME-6 train array u02 restored.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -27,8 +27,8 @@ features:
     truth: false
     truncation_strategy: random
     type: mmap
-  - features_dir: $WW_FEAT/audioset_neg     # it2: AudioSet bal_train 00-01,03-12 + FMA-xs (train pool); it8: + 13-37
-    sampling_weight: 8.0
+  - features_dir: $WW_FEAT/audioset_neg     # it2: AudioSet bal_train 00-01,03-12 + FMA-xs (train pool); it8: + 13-37; it10: + unbal 000-005
+    sampling_weight: 10.0
     penalty_weight: 1.0
     truth: false
     truncation_strategy: random

@@ -1,4 +1,4 @@
-# it8: it7 + AudioSet bal_train negatives 03-37 (was 03-12), their weight 5 -> 8.
+# it9b: it8 + negative_class_weight 20 -> 30.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -60,7 +60,7 @@ features:
 
 training_steps: [20000, 10000]            # it2: + a low-LR second phase
 positive_class_weight: [1, 1]
-negative_class_weight: [20, 20]
+negative_class_weight: [30, 30]                 # it9b: 20 -> 30
 learning_rates: [0.001, 0.0002]
 batch_size: 128
 

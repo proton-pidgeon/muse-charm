@@ -7,12 +7,13 @@ random/np.random) and the weight init. CPU float reductions can still differ in 
 bits between machines.
 """
 
+import os
 import runpy
 import sys
 
 import tensorflow as tf
 
-SEED = 21
+SEED = int(os.environ.get("WW_SEED", "21"))  # iterations it11*: other seeds of the same config
 
 tf.keras.utils.set_random_seed(SEED)  # seeds random, numpy and tf
 sys.argv = ["microwakeword.model_train_eval"] + sys.argv[1:]
