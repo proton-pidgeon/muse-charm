@@ -1,3 +1,4 @@
+# it5: same training config as it4; the change is DATA (xl cross-lingual voices, generate.py).
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -6,15 +7,15 @@ window_step_ms: 10
 train_dir: $WW_RUNS/$RUN/model
 
 features:
-  - features_dir: $WW_FEAT/positives        # it3: stored once (224 frames), shifted 0-9 frames here
-    sampling_weight: 2.0
+  - features_dir: $WW_FEAT/positives        # it3: stored once (224 frames), shifted 0-9 frames here; it4: weight 2 -> 4
+    sampling_weight: 4.0
     penalty_weight: 1.0
     truth: true
     truncation_strategy: fixed_right_cutoff
     fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     type: mmap
   - features_dir: $WW_FEAT/hardneg          # ours: TTS near-homophones + general TTS speech,
-    sampling_weight: 6.0                     # it2: aligned exactly like the positives (phrase end
+    sampling_weight: 3.0                     # it2: aligned exactly like the positives (phrase end; it4: 6 -> 3
     penalty_weight: 1.0                      # 0-9 frames before the window end)
     truth: false
     truncation_strategy: fixed_right_cutoff

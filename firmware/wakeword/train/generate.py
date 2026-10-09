@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Stage 3: synthesise the "Hey Vesper" dataset with Piper TTS (runs in venv-piper).
 
-Two TTS sources, both split by SPEAKER so no held-out voice is ever trained on:
+Three TTS sources, split by SPEAKER/VOICE so no held-out voice is ever trained on:
 
   lt    the multi-speaker LibriTTS-R generator (en_US-libritts_r-medium.pt, 904 speakers).
         Speakers 0..799 are shuffled with a fixed seed: 80 -> test, 60 -> val, 660 -> train.
         Each sample SLERP-mixes two speakers of the SAME split.
   onnx  stock Piper voices (.onnx). Whole single-speaker voices are assigned to train or test;
         multi-speaker voices (vctk, l2arctic, arctic, aru) are split by speaker id.
+  xl    (train only, it5) non-English stock Piper voices speaking English phonemes (XL_VOICES).
 
 Synthesis settings (speed = length_scale, noise_scale, noise_w) also differ: test uses values
 that are never used for train/val (see SETTINGS).
@@ -90,11 +91,27 @@ SETTINGS = {
 }
 
 # --- per-split counts (scaled by --scale) ----------------------------------------------------
-COUNTS = {  # kind -> split -> (n_lt, n_onnx)  [hardneg counts are PER PHRASE]
-    "pos": {"train": (16000, 6000), "val": (1000, 500), "test": (1500, 1500)},
-    "hardneg": {"train": (400, 150), "val": (25, 10), "test": (40, 40)},
-    "general": {"train": (3000, 1500), "val": (150, 50), "test": (300, 300)},
+COUNTS = {  # kind -> split -> (n_lt, n_onnx, n_xl)  [hardneg counts are PER PHRASE]
+    "pos": {"train": (40000, 15000, 15000), "val": (1000, 500, 0), "test": (1500, 1500, 0)},  # it3: lt/onnx (16000, 6000) -> (40000, 15000); it5: + xl
+    "hardneg": {"train": (400, 150, 100), "val": (25, 10, 0), "test": (40, 40, 0)},
+    "general": {"train": (3000, 1500, 1000), "val": (150, 50, 0), "test": (300, 300, 0)},
 }
+
+# it5: "xl" = non-English Piper voices fed ENGLISH (en-us espeak) phonemes, i.e. accented English
+# from ~30 more voice models (several multi-speaker). TRAIN ONLY: val/test voices are unchanged.
+XL_VOICES = [
+    "de_DE-mls-medium", "fr_FR-mls-medium", "nl_NL-mls-medium", "de_DE-thorsten-medium",
+    "de_DE-thorsten_emotional-medium", "es_ES-sharvard-medium", "es_ES-davefx-medium",
+    "es_MX-ald-medium", "it_IT-paola-medium", "it_IT-serena-medium", "fr_FR-siwis-medium",
+    "fr_FR-tom-medium", "fr_FR-upmc-medium", "nl_NL-pim-medium", "pl_PL-darkman-medium",
+    "pl_PL-gosia-medium", "pt_BR-faber-medium", "pt_BR-cadu-medium", "ru_RU-denis-medium",
+    "ru_RU-irina-medium", "sv_SE-nst-medium", "no_NO-nvcc-medium", "hi_IN-pratham-medium",
+    "hi_IN-priyamvada-medium", "cy_GB-bu_tts-medium", "da_DK-talesyntese-medium",
+    "cs_CZ-kasandra-medium", "hu_HU-anna-medium",
+]
+# English phonemes some foreign voices lack -> closest sequences they have
+XL_FALLBACK = {"ɚ": ["ə", "ɹ"], "ɝ": ["ɜ", "ɹ"], "ɹ": ["r"], "ᵻ": ["ɪ"], "ɾ": ["t"], "ɐ": ["a"],
+               "ʌ": ["a"], "ɜ": ["ə"], "ɪ": ["i"], "ʊ": ["u"], "æ": ["a"], "ɑ": ["a"], "ɔ": ["o"]}
 
 
 def texts_for(kind):
@@ -226,16 +243,89 @@ def gen_onnx(split, kind, n_total, outdir, writer):
             writer.writerow([p.name, t, voice, sid, "", length, noise, noise_w])
 
 
+def xl_phoneme_ids(id_map, phonemes):
+    """Phoneme ids for a foreign voice; None if a phoneme has no mapping even after fallbacks."""
+    ids = list(id_map["^"]) + list(id_map["_"])
+    for ph in phonemes:
+        seq = [ph]
+        while any(p not in id_map for p in seq):
+            new = []
+            for p in seq:
+                if p in id_map:
+                    new.append(p)
+                elif p in XL_FALLBACK:
+                    new.extend(XL_FALLBACK[p])
+                elif p in ("ˈ", "ˌ", "ː"):  # stress/length marks: drop if unknown
+                    continue
+                else:
+                    return None
+            if new == seq:
+                return None
+            seq = new
+        for p in seq:
+            ids.extend(id_map[p])
+            ids.extend(id_map["_"])
+    ids.extend(id_map["$"])
+    return ids
+
+
+def gen_xl(split, kind, n_total, outdir, writer):
+    if n_total <= 0:
+        return
+    from piper import PiperVoice, SynthesisConfig
+    from piper.phonemize_espeak import EspeakPhonemizer
+    from piper_sample_generator.__main__ import audio_float_to_int16
+
+    phon = EspeakPhonemizer()
+    texts = texts_for(kind)
+    st = SETTINGS[split]
+    per_text = kind == "hardneg"
+    targets = [(t, n_total) for t in texts] if per_text else [(None, n_total)]
+    loaded, ph_cache = {}, {}
+    for text, n in targets:
+        tag = "" if text is None else f"h{texts.index(text):02d}_"
+        for idx in range(n):
+            rng = random.Random(f"{SEED}-{split}-{kind}-xl-{tag}{idx}")  # per-sample: resumable
+            voice = XL_VOICES[rng.randrange(len(XL_VOICES))]
+            length = rng.choice(st["length_scales"])
+            noise = rng.choice(st["noise_scales"])
+            noise_w = rng.choice(st["noise_ws"])
+            t = text if text is not None else rng.choice(texts)
+            spk_draw = rng.random()
+            p = outdir / f"xl_{tag}{idx:06d}.wav"
+            if p.exists():
+                continue
+            if voice not in loaded:
+                loaded[voice] = PiperVoice.load(str(ensure_voice(voice)))
+            pv = loaded[voice]
+            if t not in ph_cache:
+                ph_cache[t] = [ph for sent in phon.phonemize("en-us", t) for ph in sent]
+            ids = xl_phoneme_ids(pv.config.phoneme_id_map, ph_cache[t])
+            if ids is None:
+                print("xl: skip", voice, repr(t), flush=True)
+                continue
+            sid = int(spk_draw * pv.config.num_speakers) if pv.config.num_speakers > 1 else None
+            cfg = SynthesisConfig(speaker_id=sid, length_scale=length, noise_scale=noise, noise_w_scale=noise_w)
+            audio = pv.phoneme_ids_to_audio(ids, cfg)
+            pcm = audio_float_to_int16(np.asarray(audio)[np.newaxis, :]).flatten()
+            if len(pcm) > 2.6 * pv.config.sample_rate:  # would lose its start in the 3.2 s clip
+                continue
+            write_wav(p, pcm, pv.config.sample_rate)
+            writer.writerow([p.name, t, voice, sid if sid is not None else 0, "", length, noise, noise_w])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("split", choices=["train", "val", "test"])
     ap.add_argument("kind", choices=["pos", "hardneg", "general"])
     ap.add_argument("--scale", type=float, default=1.0, help="multiply the COUNTS table")
-    ap.add_argument("--only", choices=["lt", "onnx"], default=None)
+    ap.add_argument("--only", choices=["lt", "onnx", "xl"], default=None)
     a = ap.parse_args()
-    n_lt, n_onnx = (max(1, int(round(c * a.scale))) for c in COUNTS[a.kind][a.split])
+    n_lt, n_onnx, n_xl = (int(round(c * a.scale)) if c else 0 for c in COUNTS[a.kind][a.split])
     base = GEN / a.kind / a.split
-    for src, n, fn in (("lt", n_lt, gen_lt), ("onnx", n_onnx, gen_onnx)):
+    for src, n, fn in (("lt", n_lt, gen_lt), ("onnx", n_onnx, gen_onnx), ("xl", n_xl, gen_xl)):
+        if n <= 0:
+            continue
         if a.only and a.only != src:
             continue
         outdir = base / src

@@ -53,7 +53,13 @@ def download(url, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     log("download", url)
-    subprocess.run(["curl", "-fsSL", "--retry", "5", "-C", "-", "-o", str(tmp), url], check=True)
+    for attempt in range(6):  # HF's CDN occasionally drops HTTP/2 streams mid-file (curl exit 92)
+        r = subprocess.run(["curl", "-fsSL", "--http1.1", "--retry", "5", "-C", "-", "-o", str(tmp), url])
+        if r.returncode == 0:
+            break
+        log(f"curl exit {r.returncode}, retrying ({attempt + 1})")
+    else:
+        raise RuntimeError(f"download failed: {url}")
     tmp.rename(dest)
     return dest
 

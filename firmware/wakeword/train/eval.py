@@ -363,6 +363,10 @@ def main():
             "fa_per_hour": round(vf, 4), "false_accepts": vd, "background_hours": round(vh, 3), "per_source": vper,
             "hardneg_trigger_rate": round(1 - frr(outs["val_hardneg"], w, c), 4),
         }
+        vby = {}
+        for n, p in zip(sets["val_pos"][0], outs["val_pos"]):
+            vby.setdefault(n.split("/")[0], []).append(p)
+        result["validation"]["frr_noisy_by_source"] = {k: {"n": len(v), "frr": round(frr(v, w, c), 4)} for k, v in vby.items()}
         test = {"n_pos": len(outs["test_pos_noisy"])}
         for cond in ("clean", "noisy", "hard"):
             test[f"frr_{cond}"] = round(frr(outs[f"test_pos_{cond}"], w, c), 4)

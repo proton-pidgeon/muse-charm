@@ -11,7 +11,7 @@ DATA = Path(os.environ["WW_DATA"])
 DURATION_S = 3.2          # augmented clip length (upstream notebook)
 JITTER_S = (0.195, 0.205)  # phrase ends ~0.2 s before the clip end (upstream notebook)
 
-POS_REPEAT = 1   # augmented copies per train positive (each also slid over 10 frames)
+POS_REPEAT = 2   # augmented copies per train positive (it3; it1-it2: 1 copy x 10 stored slides)
 NEG_REPEAT = 2   # augmented copies per train hard-negative / general TTS clip
 
 # upstream basic_training_notebook probabilities

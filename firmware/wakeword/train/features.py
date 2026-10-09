@@ -32,9 +32,9 @@ SEED = 21
 
 # Frames kept from the end of each 3.2 s augmented positive. The model needs
 # spectrogram_length = 204 frames (clip_duration_ms 1500 + 154 slices dropped by the mixednet
-# convolutions); +SLIDE-1 for the shifted copies, + a little margin.
+# convolutions); the training config's fixed_right_cutoffs [0..9] shift the window end by up to
+# 9 frames (what upstream's slide_frames=10 does by storing 10 copies), + a little margin.
 KEEP_FRAMES_POS = 224
-SLIDE_POS = 10
 
 
 def seed_all(tag):
@@ -78,10 +78,7 @@ def positive_specs(directory, augmenter, repeat):
 
     for audio in clip_iter(directory, repeat):
         spec = generate_features_for_clip(augmenter.augment_clip(audio), step_ms=10)
-        spec = spec[-KEEP_FRAMES_POS:]
-        length = spec.shape[0] - SLIDE_POS + 1
-        for i in range(SLIDE_POS):  # the word end shifted 0..9 frames earlier (upstream slide_frames)
-            yield to_u16(spec[i:i + length])
+        yield to_u16(spec[-KEEP_FRAMES_POS:])
 
 
 def negative_specs(directory, augmenter, repeat):
@@ -117,13 +114,12 @@ def audioset_neg():
     import download_data
     from microwakeword.audio.audio_utils import generate_features_for_clip
 
-    def shard_specs():
-        for shard in AUDIOSET_NEG_SHARDS:
-            for _, pcm in download_data.audioset_shard_clips("bal_train", shard):
-                yield to_u16(generate_features_for_clip(pcm, step_ms=10))
-            print("audioset_neg shard", shard, flush=True)
+    def shard_specs(shard):
+        for _, pcm in download_data.audioset_shard_clips("bal_train", shard):
+            yield to_u16(generate_features_for_clip(pcm, step_ms=10))
 
-    build(FEAT / "audioset_neg" / "training" / "audioset_bal_train_03_12_mmap", shard_specs())
+    for shard in AUDIOSET_NEG_SHARDS:  # one mmap per shard, so an interrupted run resumes
+        build(FEAT / "audioset_neg" / "training" / f"audioset_bal_train_{shard}_mmap", shard_specs(shard))
 
     def pool_specs():
         from scipy.io import wavfile
