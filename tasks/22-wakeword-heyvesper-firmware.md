@@ -45,3 +45,16 @@ Replace the crashed "Computer" WakeNet bootstrap with the trained custom "Hey Ve
 - If microWakeWord cannot fit in SRAM either, do NOT force it — report back with the numbers and alternative approaches.
 
 ## Status (impl-22-wakeword-heyvesper-fw, branch `impl/22-wakeword-heyvesper-fw`, firmware 1.0.4)
+Design and numbers: `firmware/README.md`, *Wake word (tasks 20, 22)*; model-side check: `firmware/wakeword/README.md`, *In the firmware*.
+
+- [x] 1. microWakeWord on TFLite Micro on the idle mic tap (`idle_capture()`, 16 kHz mono, 20 ms): `hatch/vesper_wakeword_engine.cc` (microfrontend + TFLM), `hatch/vesper_mww.c` (quantiser, 3-frame stride, W 3 / cutoff / cooldown rule), `hatch/vesper_wakeword.c` (glue); patch `0008`. Detection enters LISTENING and the normal turn flow; PTT untouched.
+- [x] 2. "Computer" REPLACED: esp-sr, WakeNet glue and `SR_*` config removed; `>wake` controls kept for the new model. Why: keeping both costs WakeNet's ~18 KB static + ~16 KB run-time internal RAM, ~2.95 MB image, two detectors on one feed, an added false-wake rate.
+- [x] 3. Memory/CPU measured: image 2,691,072 -> 2,297,856 B (45% of slot free); static internal 191,133 -> 173,105 B (+192 B over 1.0.2); ext .bss +4,208 B; arena 32 KB PSRAM (24,608 B used on host); ~24,800 MACs / 30 ms inference (≤ ~3.5% of core 1 bound). Board figures: boot log (human gate).
+- [x] 4. Threshold `CONFIG_VESPER_WAKE_THRESHOLD=650` (task 21's validated point), window 3; serial `>wake.threshold=`, NVS `muse:wake_hv_thr`. Documented with the test curve and confusables.
+- [x] 5. False triggers: task 20's listen path, unchanged (no backend before onset; 5 s quiet timeout).
+- [x] 6. UX: same LISTENING mode/caption as PTT; screen wakes.
+- [x] 7. `hatch/VERSION` 1.0.4.
+- [x] 8. Build green: `make -C firmware test` (incl. new `test_vesper_mww`, log hygiene); fresh `b1a3822` tree, `apply-sdk.sh` idempotent (and upgrades a 1.0.3 tree with just `0008`), AIPI build OK (0 warnings in Vesper/Muse code; 8 -Wshadow inside esp-tflite-micro's own SUB kernel). `make -C firmware wake-host-check` passes (firmware pipeline == training pipeline). Adversarial review: orchestrator's gate.
+- [x] 9. Not flashed, not published.
+- [x] 10. `docs/usb-flash-runbook.md` flashes 1.0.4; binary `/Users/k3v/builds/muse-charm/scratch/firmware-1.0.4/muse-gadget.bin` (also recorded in HANDOVER.md).
+- [ ] Done-when items left to the orchestrator/Kevin: merge after review, board issue close, on-device check (`firmware/README.md`, *On-device check (task 22)*).

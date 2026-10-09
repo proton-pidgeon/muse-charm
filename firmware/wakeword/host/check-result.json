@@ -1,0 +1,38 @@
+{
+  "clips": {
+    "positive": {
+      "n": 300,
+      "host_detected": 299,
+      "reference_detected": 299
+    },
+    "general_speech": {
+      "n": 300,
+      "host_detected": 0,
+      "reference_detected": 0
+    }
+  },
+  "input_mismatches": 0,
+  "verdict_mismatches": 0,
+  "clip_outputs": {
+    "inferences": 51732,
+    "identical_to_litert_reference_kernels": 51726,
+    "max_diff_to_litert_reference_kernels": 7,
+    "identical_to_eval_py_xnnpack": 50812,
+    "max_diff_to_eval_py_xnnpack": 8
+  },
+  "arena_used_host": 24608,
+  "host_us_per_inference": 14.6,
+  "stream": {
+    "source": "audioset_eval_06.wav",
+    "minutes": 10.0,
+    "inferences": 19999,
+    "inputs_identical": true,
+    "outputs_identical_to_litert_reference_kernels": 19999,
+    "max_diff_to_litert_reference_kernels": 0,
+    "outputs_identical_to_eval_py_xnnpack": 19855,
+    "max_diff_to_eval_py_xnnpack": 2,
+    "host_detections": 0,
+    "reference_detections": 0
+  },
+  "pass": true
+}
