@@ -324,9 +324,21 @@ def poisson_upper95(k):
     return float(chi2.ppf(0.975, 2 * (k + 1)) / 2)
 
 
+# addendum #3 pre-registration: --confirm-only certifies this model, point and shard set only
+CONFIRM_SHA256 = "40b3510d094de7fd2a8848faad09573915ad86b291381317403b09e419b6340d"
+CONFIRM_POINT = (0.65, 3)
+CONFIRM_SHARDS = [f"{s:02d}" for s in range(16, 30)]
+
+
 def confirm_only(a, model, model_info, t0):
-    assert a.fixed_cutoff is not None and a.fixed_window is not None, "--confirm-only needs --fixed-*"
     c, w = a.fixed_cutoff, a.fixed_window
+    if model_info["sha256"] != CONFIRM_SHA256:
+        sys.exit(f"--confirm-only: model sha256 {model_info['sha256']} is not the pre-registered model")
+    if (c, w) != CONFIRM_POINT:
+        sys.exit(f"--confirm-only: point {c}/{w} is not the pre-registered {CONFIRM_POINT[0]}/{CONFIRM_POINT[1]}")
+    have = sorted(s.rsplit("_", 1)[1] for s in AMBIENT["confirm"])
+    if have != CONFIRM_SHARDS:
+        sys.exit(f"--confirm-only: shards {have} are not the pre-registered set {CONFIRM_SHARDS}")
     by_src = ambient_tracks("confirm", a.workers)
     out = {src: run_all(model, split_long(tr), a.workers) for src, tr in by_src.items()}
     f, d, h, per = faph(out, w, c)
