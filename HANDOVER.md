@@ -392,3 +392,21 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Published: `vesper-node firmware publish` → 1.0.2, sha256 a563f886..., at 18:29. `firmware status` confirms.
 - Board pickup pending: homelink-c86320 checks manifest at boot / every 6h / `>ota.check` (serial). Last board turn 17:25. Kevin can reboot the board to pull it immediately.
 - Issue #17 closed; board #11 → Done.
+
+## 2026-10-08 ~19:40 CDT — wake-word build dispatched (tasks 20/21)
+- Kevin approved BOTH wake-word tracks after direct research with Vesper: ESP-SR has ~17 English built-ins (not 4).
+- Task 20 (issue #18): "Computer" bootstrap via ESP-SR WakeNet (wn9_computer_tts) — firmware, on-device, PTT coexists. Dispatched via `/implement tasks/20-wakeword-computer.md` on mac-daddy31337.
+- Task 21 (issue #19): train custom "Hey Vesper" microWakeWord model on the Studio (synthetic Piper TTS, ~50KB TFLite). Task file ready; runs after task 20 (one task per host). Board item Todo.
+
+## 2026-10-08 ~20:00 CDT -- OTA root cause found (NOT remotely fixable)
+
+Root cause: Board homelink-c86320 was provisioned with hatch.host=http://192.168.5.16:8797 (HTTP socat stopgap; provision_interactive.py:18). The firmware OTA gate (vo_server_ok in vesper_ota.c) requires HTTPS. With an HTTP host, every OTA check is skipped with status needs_https (muse_chat_vesper.c:1573-1579). The board has NEVER checked the manifest (zero firmware check backend log entries). Turns work fine over HTTP via the socat bridge (TCP4:8797 to TCP6:[::1]:8796, confirmed running).
+
+Chicken-and-egg confirmed: The https-only gate is hardcoded in the 1.0.0 firmware on the board. It cannot be fixed via OTA because OTA itself is gated. No remote config endpoint exists to change hatch.host. The ota.check serial command needs USB.
+
+Fix path (requires physical access): When Kevin is at the Studio: (1) USB-flash 1.0.2 directly (muse-gadget.bin already built at scratch/sdk-impl-18-fresh/esp32/build-muse-aipi/), then (2) set hatch.host=https://peggy.fly.dev/vesper-node via serial so FUTURE OTAs work (Peggy URL is https, satisfying the gate).
+
+## 2026-10-08 ~20:15 CDT — task 20 merged, task 21 dispatched
+- Task 20 ("Computer" WakeNet bootstrap) MERGED to main (8b9239c, firmware 1.0.3, model embedded). Issue #18 closed, board Done.
+- CAVEAT: board is on 1.0.0 with broken OTA (HTTP hatch.host vs HTTPS-only gate) — 1.0.3 cannot reach it OTA. Needs Kevin at Studio for USB flash.
+- Task 21 ("Hey Vesper" microWakeWord training) dispatched via `/implement tasks/21-wakeword-heyvesper-train.md`. Issue #19 In Progress.
