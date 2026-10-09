@@ -17,8 +17,8 @@ Roles (see ../quality-bars.md for why each split is where it is):
               Two further evaluation shards (EVAL_VAL_SHARDS) are the extra validation ambient
               set used for cutoff tuning. Each shard is concatenated into one long 16 kHz track.
 
-Usage: python download_data.py [rirs] [noise] [negatives] [background] [background_val_ext]
-       (default: the first four; background_val_ext = the it14+ extra validation ambient, opt-in)
+Usage: python download_data.py [rirs] [noise] [negatives] [background] [background_val_ext]  (default: all)
+       background_val_ext = the extra validation ambient of quality-bars.md addendum #2 (it14+)
 """
 
 import hashlib
@@ -228,7 +228,7 @@ def background(roles=(("background_val", EVAL_VAL_SHARDS), ("background_test", E
 
 
 def background_val_ext():
-    """The extra validation ambient (it14+). Opt-in step; the old iterations never had it."""
+    """The extra validation ambient (it14+, quality-bars.md addendum #2). it1-it13 never had it."""
     background(roles=(("background_val_ext", EVAL_VAL_EXT_SHARDS),))
 
 
@@ -236,7 +236,7 @@ STEPS = {"rirs": rirs, "noise": noise, "negatives": negatives, "background": bac
          "background_val_ext": background_val_ext}
 
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or ["rirs", "noise", "negatives", "background"]
+    wanted = sys.argv[1:] or list(STEPS)  # it14+: background_val_ext is part of the default recipe
     for w in wanted:
         STEPS[w]()
     log("download done:", wanted)

@@ -1,4 +1,4 @@
-# it14: it8 + the mined hard-negative set (mine_negatives.py over 7 earlier models, prob >= 0.5), weight 6.
+# it15: it14 + it12's longer plateau: positives and aligned TTS hard negatives shifted 0..20 frames (was 0..9).
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -12,14 +12,14 @@ features:
     penalty_weight: 1.0
     truth: true
     truncation_strategy: fixed_right_cutoff
-    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     type: mmap
   - features_dir: $WW_FEAT/hardneg          # ours: TTS near-homophones + general TTS speech,
     sampling_weight: 3.0                     # it2: aligned exactly like the positives (phrase end; it4: 6 -> 3
     penalty_weight: 1.0                      # 0-9 frames before the window end)
     truth: false
     truncation_strategy: fixed_right_cutoff
-    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     type: mmap
   - features_dir: $WW_FEAT/hardneg          # ... and at random positions
     sampling_weight: 2.0

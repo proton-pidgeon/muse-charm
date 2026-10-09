@@ -1,4 +1,4 @@
-# it14: it8 + the mined hard-negative set (mine_negatives.py over 7 earlier models, prob >= 0.5), weight 6.
+# it18: FINE-TUNE of it8's final weights (WW_INIT_FROM=it8) on it14's data (mined set, weight 6): 10k steps at LR 2e-4.
 # microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
 # $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
 # Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
@@ -65,10 +65,10 @@ features:
     truncation_strategy: split
     type: mmap
 
-training_steps: [20000, 10000]            # it2: + a low-LR second phase
-positive_class_weight: [1, 1]
-negative_class_weight: [20, 20]
-learning_rates: [0.001, 0.0002]
+training_steps: [10000]                   # it18: fine-tune schedule (WW_INIT_FROM=it8), low LR only
+positive_class_weight: [1]
+negative_class_weight: [20]
+learning_rates: [0.0002]
 batch_size: 128
 
 time_mask_max_size: [0, 0]

@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # Stage 5: train the mixednet model (upstream microwakeword.model_train_eval, CPU TensorFlow),
 # then export the int8 streaming tflite (export.py).
-# Usage: [WW_SEED=21] 05_train.sh <run-name> [training_parameters.yaml]
+# Usage: [WW_SEED=21] [WW_INIT_FROM=<run>] 05_train.sh <run-name> [training_parameters.yaml]
 # Output: $WW_RUNS/<run>/model/ (checkpoints, best_weights) and $WW_RUNS/<run>/hey-vesper.tflite
+# WW_INIT_FROM=<run> (it18+): start from that run's final weights + optimiser state (its
+# model/restore/ checkpoint is copied in; upstream restores it and counts steps from 1 again),
+# i.e. a fine-tune. The yaml's training_steps / learning_rates are then the fine-tune schedule.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 RUN="${1:?run name}"
 YAML="${2:-$WW_TRAIN_DIR/training_parameters.yaml}"
 export RUN
 mkdir -p "$WW_RUNS/$RUN"
+if [ -n "${WW_INIT_FROM:-}" ] && [ ! -d "$WW_RUNS/$RUN/model/restore" ]; then
+  mkdir -p "$WW_RUNS/$RUN/model"
+  cp -R "$WW_RUNS/$WW_INIT_FROM/model/restore" "$WW_RUNS/$RUN/model/restore"
+  echo "$WW_INIT_FROM" > "$WW_RUNS/$RUN/init_from.txt"
+fi
 "$WW_PY_MWW" -c 'import os,sys; t=open(sys.argv[1]).read(); open(sys.argv[2],"w").write(os.path.expandvars(t))' \
   "$YAML" "$WW_RUNS/$RUN/training_parameters.yaml"
 

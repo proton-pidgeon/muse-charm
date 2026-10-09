@@ -5,7 +5,7 @@ Runs a trained streaming model (the same int8 .tflite the device runs, same deci
 eval.py) over every training negative spectrogram (microWakeWord's speech / dinner_party /
 no_speech sets, our AudioSet bal_train + train-noise-pool negatives) and records every place
 where the model fires or nearly fires. Those windows are then stored as a dedicated,
-end-aligned negative feature set (`$WW_FEAT/mined_neg/training/<tag>_mmap`, 224 frames each,
+end-aligned negative feature set (`$WW_FEAT/mined_neg_<tag>/training/<tag>_mmap`, 224 frames each,
 the detection at the window end), which the next training run samples with its own weight and
 `fixed_right_cutoff` 0-9, exactly like the aligned TTS hard negatives.
 
@@ -14,11 +14,13 @@ RIR/noise pools or the held-out TTS splits is ever touched here (see the SOURCES
 
 Usage:
   mine_negatives.py scan   <model.tflite> <scan.npz> [--min-prob 0.3] [--workers N]
-  mine_negatives.py build  <scan.npz> <tag> [--min-prob 0.5] [--max-per-source N]
+  mine_negatives.py build  <tag> <scan.npz> [more.npz ...] [--min-prob 0.5] [--max-per-source N]
   mine_negatives.py stats  <scan.npz>
 
-`scan` is model-specific and slow-ish (~5-10 min for ~530 h on 14 workers); `build` is instant
-and can be re-run with another threshold. `tag` names the output mmap.
+`scan` is model-specific (~1 min for ~530 h on 13 workers); `build` is instant and can be
+re-run with another threshold. Several scans (several models) can be merged into one set: hits
+from the same spectrogram within DEDUP_FRAMES of each other count once (highest prob kept).
+`tag` names the output mmap.
 """
 
 import argparse
@@ -39,6 +41,7 @@ COOLDOWN = 25         # as eval.py: ignore 25 inferences after a hit and at the 
 KEEP_FRAMES = 224     # as features.py KEEP_FRAMES_POS: 204 model frames + 0-9 cutoff + margin
 END_MARGIN = 5        # frames stored after the detection end (so cutoff 0..9 brackets the hit)
 TASK_CHUNKS = 2000    # spectrograms per worker task
+DEDUP_FRAMES = 30     # build: hits on the same spectrogram closer than this (frames) are one hit
 
 # Training-only negative sources (name -> RaggedMmap dir). Nothing else is ever scanned.
 SOURCES = {
@@ -187,24 +190,36 @@ def stats(a):
 
 
 def build(a):
-    """Store the selected hits as an end-aligned 224-frame negative set."""
+    """Store the selected hits (merged over the given scans) as an end-aligned 224-frame set."""
     from mmap_ninja.ragged import RaggedMmap
 
-    z = np.load(a.scan, allow_pickle=False)
-    src, idx, end, prob = z["src"], z["idx"], z["end"], z["prob"]
-    order = np.argsort(-prob)
+    parts = [np.load(f, allow_pickle=False) for f in a.scans]
+    src = np.concatenate([z["src"] for z in parts])
+    idx = np.concatenate([z["idx"] for z in parts])
+    end = np.concatenate([z["end"] for z in parts])
+    prob = np.concatenate([z["prob"] for z in parts])
+    order = np.argsort(-prob, kind="stable")
     chosen = []
     per_source = {}
+    taken = {}  # (src, idx) -> [end frames already taken]
+    n_dup = 0
     for k in order:
         if prob[k] < a.min_prob:
             break
         s = str(src[k])
+        key = (s, int(idx[k]))
+        ends = taken.setdefault(key, [])
+        if any(abs(int(end[k]) - e) < DEDUP_FRAMES for e in ends):
+            n_dup += 1
+            continue
         if per_source.get(s, 0) >= a.max_per_source:
             continue
+        ends.append(int(end[k]))
         per_source[s] = per_source.get(s, 0) + 1
         chosen.append(k)
     chosen.sort(key=lambda k: (str(src[k]), int(idx[k]), int(end[k])))
-    out = FEAT / "mined_neg" / "training" / f"{a.tag}_mmap"
+    log(f"{len(parts)} scan(s), {len(prob)} hits, {n_dup} duplicates dropped, {len(chosen)} chosen")
+    out = FEAT / f"mined_neg_{a.tag}" / "training" / f"{a.tag}_mmap"
     done = out.parent / (out.name + ".done")
     if done.exists():
         raise SystemExit(f"exists: {out} (delete it and its .done to rebuild)")
@@ -243,8 +258,8 @@ def main():
     s.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     s.set_defaults(fn=scan)
     b = sub.add_parser("build")
-    b.add_argument("scan")
     b.add_argument("tag")
+    b.add_argument("scans", nargs="+")
     b.add_argument("--min-prob", type=float, default=0.5)
     b.add_argument("--max-per-source", type=int, default=100000)
     b.set_defaults(fn=build)

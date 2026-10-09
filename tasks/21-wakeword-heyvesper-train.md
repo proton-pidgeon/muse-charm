@@ -15,7 +15,7 @@ Train a custom on-device wake-word model for "Hey Vesper" using microWakeWord (T
    - Negative samples: similar-sounding phrases ("hey whisper", "a vesper", background speech), plus noise/reverb augmentation.
    - Document the dataset composition (counts per class).
 - [x] 3. Train the microWakeWord model targeting ~50KB (quantized int8 TFLite Micro).
-- [x] 4. Evaluate against quality bars (define these explicitly before training): (iterated: 19 runs; B1 + B3 pass, B2 fails)
+- [x] 4. Evaluate against quality bars (define these explicitly before training): (iterated: 26 runs; the shipped run it14 s22 passes B1, B2 and B3 on the held-out test)
    - False-reject rate on held-out "Hey Vesper" samples (target: <5%).
    - False-accept rate on negatives + background audio (target: <1 false alarm per hour of background).
    - Model size ≤ 64KB.
@@ -24,7 +24,7 @@ Train a custom on-device wake-word model for "Hey Vesper" using microWakeWord (T
 - [ ] 6. Do NOT swap it into the firmware in this task — that swap is a separate step after Kevin hears the quality numbers. Record the model + metrics in HANDOVER.md.
 
 ## Done when
-- [ ] `hey-vesper.tflite` exported with documented quality metrics meeting the bars. (NOT met: B2 fails, 1.55 FA/h on test; see firmware/wakeword/README.md)
+- [x] `hey-vesper.tflite` exported with documented quality metrics meeting the bars. (FRR 2.93 %, 0.22 FA/h, 60,840 B at the validation-chosen point 0.65 / W 3; see firmware/wakeword/README.md)
 - [x] Training reproducible: dataset recipe + training command recorded in the repo.
 - [ ] HANDOVER.md updated; board issue closed with dotted Summary.
 

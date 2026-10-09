@@ -13,7 +13,7 @@ import sys
 
 import tensorflow as tf
 
-SEED = int(os.environ.get("WW_SEED", "21"))  # iterations it11*: other seeds of the same config
+SEED = int(os.environ.get("WW_SEED", "22"))  # 22 = the shipped run (it14 s22); it1-it13 and it14 s21 used 21
 
 tf.keras.utils.set_random_seed(SEED)  # seeds random, numpy and tf
 sys.argv = ["microwakeword.model_train_eval"] + sys.argv[1:]
