@@ -433,3 +433,11 @@ Fix path (requires physical access): When Kevin is at the Studio: (1) USB-flash 
 - Wrote `docs/usb-flash-runbook.md`: exact esptool command for 1.0.3, serial
   `>hatch.host=https://peggy.fly.dev/vesper-node` to fix OTA, verification steps.
   Ready for Kevin at the Studio.
+
+## 2026-10-09 ~03:10 CDT — task 21 merged: "Hey Vesper" model meets all three bars
+- Merged `ef786b1`. Model `firmware/wakeword/hey-vesper.tflite`: 60,840 B (bar ≤ 65,536), sha256 `40b3510d…6340d`, int8 streaming microWakeWord, input [1,3,40] int8, 16 kHz, 30 ms window / 10 ms step, 40 mel. Detection: cutoff 0.65, sliding window 3 (sum of last 3 uint8 outputs > 498). Tensor arena ~31 KB (estimate; measure on board).
+- Held-out test: FRR 2.93% on 3,000 synthetic positives (bar < 5%; 1.90% clean, 9.00% hard), 0.22 FA/h (3 in 13.58 h, DipCo + AudioSet eval 00-05; bar < 1). The test set was seen across 26 dev runs, so a pre-registered one-shot confirmatory holdout (AudioSet eval 16-29, 19.23 h, never used) was scored: 0.31 FA/h (6 FAs), Poisson 95% upper bound 0.68/h, PASS.
+- Confusables still trigger sometimes: "a vesper" 13.8%, "hey whisper" 8.8%, "hey Esther" 5%; "vespers", "Vespa", "best for" and bare "Vesper" at 0%.
+- How it got there: the opus rung (19 runs) plateaued at 1.55 FA/h. The Fable rung added hard-negative mining over the training negatives plus a larger validation background, and picked it14 seed 22 by a validation-only rule committed before scoring. Review: GPT-5.5 HIGH (test-set reuse) was downgraded by the Fable adjudicator and resolved by the fresh holdout. A delta advisory made `eval.py --confirm-only` fail closed.
+- Recipe: `firmware/wakeword/train/` (stage scripts 01-06 + 04b mining, pinned locks, configs for all runs). Heavy data in `~/builds/muse-charm/scratch/wakeword-21/` (~26 GB; training WAVs deleted, so features need a stage-3 regen to rebuild).
+- Caveat: all positives are synthetic Piper TTS, and the numbers say nothing about Kevin's room, mic gain or real voices. Firmware swap (step 6) is NOT done; it waits for Kevin to hear these numbers, plus an on-device soak.

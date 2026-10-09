@@ -26,7 +26,7 @@ Train a custom on-device wake-word model for "Hey Vesper" using microWakeWord (T
 ## Done when
 - [x] `hey-vesper.tflite` exported with documented quality metrics meeting the bars. (FRR 2.93 %, 0.22 FA/h, 60,840 B at the validation-chosen point 0.65 / W 3; see firmware/wakeword/README.md)
 - [x] Training reproducible: dataset recipe + training command recorded in the repo.
-- [ ] HANDOVER.md updated; board issue closed with dotted Summary.
+- [x] HANDOVER.md updated; board issue closed with dotted Summary.
 
 ## Constraints
 - Studio only. No cloud services, no real voice recordings — synthetic only.
