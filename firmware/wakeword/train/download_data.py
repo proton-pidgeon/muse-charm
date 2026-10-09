@@ -176,6 +176,16 @@ def noise():
         log("noise_train fma", n)
 
 
+# Disk budget (~30 GB for the whole recipe): drop two mmaps that duplicate another one's content
+# from a different microphone (VOiCES close-talk lavalier = same utterances as the far one we keep;
+# CHiME-6 array u02 = same sessions as array u01). The VOiCES "mid" copy is pruned for the same reason.
+PRUNE = [
+    "speech/training/voices_lav_clo_training_mmap",
+    "speech/training/voices_lav_mid_training_mmap",
+    "dinner_party/training/chime6_train_u02_ch1_mmap",
+]
+
+
 def negatives():
     out = DATA / "negative_datasets"
     for name in ("dinner_party", "dinner_party_eval", "no_speech", "speech"):
@@ -187,6 +197,10 @@ def negatives():
             zf.extractall(out)
         z.unlink()
         log("negatives", name, "extracted")
+    for rel in PRUNE:
+        if (out / rel).exists():
+            shutil.rmtree(out / rel)
+            log("pruned", rel)
 
 
 def background():
