@@ -410,3 +410,26 @@ Fix path (requires physical access): When Kevin is at the Studio: (1) USB-flash 
 - Task 20 ("Computer" WakeNet bootstrap) MERGED to main (8b9239c, firmware 1.0.3, model embedded). Issue #18 closed, board Done.
 - CAVEAT: board is on 1.0.0 with broken OTA (HTTP hatch.host vs HTTPS-only gate) — 1.0.3 cannot reach it OTA. Needs Kevin at Studio for USB flash.
 - Task 21 ("Hey Vesper" microWakeWord training) dispatched via `/implement tasks/21-wakeword-heyvesper-train.md`. Issue #19 In Progress.
+
+## 2026-10-08 ~20:45 CDT — task 20 implementer final report (merged 8b9239c)
+- "Computer" wakes the board into the identical PTT listening flow; PTT unaffected.
+- Privacy: zero audio leaves before detection; "Computer" + silence → idle after 5s, no backend call. Turn ends on 1s silence or 15s cap.
+- Sensitivity default 0.65 (Espressif tuning); serial `>wake.threshold=X`, `>wake=on|off`, saved, no restart needed.
+- Model embedded in app image (~290KB); firmware 2,035,712 → 2,691,072 B (64% of 4MiB slot, OTA still fits). No partition changes.
+- Review: GPT-5.5 (1 medium, fixed) + Fable adjudication, second pass approved. No blockers.
+- Risk: +34KB fast SRAM (16KB at WakeNet start); Wi-Fi/BT/display share it — verify on boot log. ~9% of one core (Espressif figure, unmeasured). Mic off on battery rest → wake word off too.
+- NOT published OTA (awaiting go-ahead) — moot: board OTA is broken (1.0.0, HTTP hatch.host vs HTTPS-only gate). Needs Kevin at Studio for USB flash of 1.0.3.
+- Built image kept at scratch/sdk-impl-20.
+
+## 2026-10-08 ~20:30 CDT — Wake-word coordinator resume (4th VM restart death)
+
+- Previous coordinator died in VM runtime restart. Adopted live state, no rebuild.
+- Task 20 ("Computer" bootstrap): DONE, merged (`8b9239c`). Firmware 1.0.3 with
+  embedded WakeNet "Computer" model; image at `scratch/sdk-impl-20`. NOT published
+  OTA (moot — board OTA broken, see 19:50 entry).
+- Task 21 ("Hey Vesper" microWakeWord training): RUNNING on Studio (PID 80096,
+  started 20:11). Branch `impl/21-wakeword-heyvesper-train`. Stages 1-3 done
+  (setup, downloads, Piper TTS synthesis); quality bars fixed before training.
+- Wrote `docs/usb-flash-runbook.md`: exact esptool command for 1.0.3, serial
+  `>hatch.host=https://peggy.fly.dev/vesper-node` to fix OTA, verification steps.
+  Ready for Kevin at the Studio.
