@@ -56,6 +56,12 @@ AMBIENT = {
         **{f"audioset_eval_{s:02d}": ("wav", DATA / f"background_val_ext/audioset_eval_{s:02d}.wav")
            for s in range(6, 16)},
     },
+    # addendum #3 (2026-10-09): confirmatory fresh holdout, used only by --confirm-only
+    "confirm": {
+        f"audioset_eval_{s:02d}": ("wav", DATA / f"background_confirm/audioset_eval_{s:02d}.wav")
+        for s in range(16, 30) if (DATA / f"background_confirm/audioset_eval_{s:02d}.wav").exists()
+        or (CACHE / "ambient" / f"audioset_eval_{s:02d}.npy").exists()
+    },
     "test": {
         "dipco": ("mmap", DATA / "negative_datasets/dinner_party_eval/testing_ambient/dipco_u01_ch1_mmap"),
         **{f"audioset_eval_{s}": ("wav", DATA / f"background_test/audioset_eval_{s}.wav")
@@ -311,6 +317,33 @@ def frr(outputs, w, cutoff):
 # ------------------------------------------------------------------------------------------
 
 
+def poisson_upper95(k):
+    """Exact (Garwood) 97.5 % upper limit (two-sided 95 % interval) for a Poisson count k."""
+    from scipy.stats import chi2
+
+    return float(chi2.ppf(0.975, 2 * (k + 1)) / 2)
+
+
+def confirm_only(a, model, model_info, t0):
+    assert a.fixed_cutoff is not None and a.fixed_window is not None, "--confirm-only needs --fixed-*"
+    c, w = a.fixed_cutoff, a.fixed_window
+    by_src = ambient_tracks("confirm", a.workers)
+    out = {src: run_all(model, split_long(tr), a.workers) for src, tr in by_src.items()}
+    f, d, h, per = faph(out, w, c)
+    result = {"label": a.label, "model": model_info, "operating_point": {"cutoff": c, "window": w, "rule": "fixed by caller"},
+              "protocol": "firmware/wakeword/quality-bars.md addendum #3",
+              "confirmatory_holdout": {
+                  "shards": sorted(s.rsplit("_", 1)[1] for s in per), "hours": round(h, 3), "false_accepts": d,
+                  "fa_per_hour": round(f, 4), "poisson95_upper_count": round(poisson_upper95(d), 3),
+                  "poisson95_upper_fa_per_hour": round(poisson_upper95(d) / h, 4),
+                  "pass": f < BARS["faph_max"], "per_shard": per},
+              "seconds": round(time.time() - t0, 1)}
+    js = json.dumps(result, indent=2)
+    print(js)
+    if a.out:
+        Path(a.out).write_text(js + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("model")
@@ -318,6 +351,8 @@ def main():
     ap.add_argument("--label", default="")
     ap.add_argument("--fixed-cutoff", type=float)
     ap.add_argument("--fixed-window", type=int)
+    ap.add_argument("--confirm-only", action="store_true",
+                    help="addendum #3: score ONLY the fresh holdout (AudioSet eval 16-29) at the fixed point")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 4) - 2))
     a = ap.parse_args()
     model = Path(a.model).resolve()
@@ -339,6 +374,9 @@ def main():
     }
     assert model_info["input"]["shape"][1] == STRIDE and model_info["input"]["dtype"] == "int8"
     log("model", model_info)
+
+    if a.confirm_only:
+        return confirm_only(a, model, model_info, t0)
 
     # ---- features (cached) ----
     sets = {k: clip_set(k, d, f) for k, (d, f) in eval_sets().items()}

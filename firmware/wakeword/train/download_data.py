@@ -17,7 +17,7 @@ Roles (see ../quality-bars.md for why each split is where it is):
               Two further evaluation shards (EVAL_VAL_SHARDS) are the extra validation ambient
               set used for cutoff tuning. Each shard is concatenated into one long 16 kHz track.
 
-Usage: python download_data.py [rirs] [noise] [negatives] [background] [background_val_ext]  (default: all)
+Usage: python download_data.py [rirs] [noise] [negatives] [background] [background_val_ext] [background_confirm]  (default: all but background_confirm)
        background_val_ext = the extra validation ambient of quality-bars.md addendum #2 (it14+)
 """
 
@@ -46,6 +46,8 @@ EVAL_TEST_SHARDS = ["00", "01", "02", "03", "04", "05"]
 # ambient, so the cutoff is picked on ~26 h instead of ~12 h. Disjoint from the test shards (00-05)
 # and from everything that is trained on. Still never in training.
 EVAL_VAL_EXT_SHARDS = [f"{i:02d}" for i in range(6, 16)]
+# Addendum #3 (quality-bars.md): confirmatory fresh holdout, scored once. Used by no earlier run.
+EVAL_CONFIRM_SHARDS = [f"{i:02d}" for i in range(16, 30)]
 
 
 def log(*a):
@@ -232,11 +234,20 @@ def background_val_ext():
     background(roles=(("background_val_ext", EVAL_VAL_EXT_SHARDS),))
 
 
+def background_confirm():
+    """The confirmatory fresh holdout (quality-bars.md addendum #3): evaluation shards 16-29.
+    WW_CONFIRM_SHARDS="16,17,..." restricts it (e.g. when disk is short)."""
+    only = os.environ.get("WW_CONFIRM_SHARDS")
+    shards = only.split(",") if only else EVAL_CONFIRM_SHARDS
+    background(roles=(("background_confirm", shards),))
+
+
 STEPS = {"rirs": rirs, "noise": noise, "negatives": negatives, "background": background,
-         "background_val_ext": background_val_ext}
+         "background_val_ext": background_val_ext,
+         "background_confirm": background_confirm}
 
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or list(STEPS)  # it14+: background_val_ext is part of the default recipe
+    wanted = sys.argv[1:] or [k for k in STEPS if k != "background_confirm"]  # it14+: background_val_ext is part of the default recipe
     for w in wanted:
         STEPS[w]()
     log("download done:", wanted)

@@ -80,6 +80,18 @@ bash firmware/wakeword/train/06_eval.sh firmware/wakeword/hey-vesper.tflite /tmp
 | `model_info.py` | - | op list + tensor-arena estimate for a tflite |
 | `iterations/itN.yaml` | - | the training config of each iteration (`it14.yaml` = `training_parameters.yaml`, the shipped run at `WW_SEED=22`; `it11`-`it14` were run with several `WW_SEED`s; `it18`/`it19` are fine-tunes, `WW_INIT_FROM=it8`) |
 
+## Confirmatory holdout (addendum #3)
+
+Scores the committed model once, at the frozen point, on AudioSet evaluation shards 16-29 (14 x
+~700 MB downloaded one at a time and deleted; ~19.2 h). Needs ~3 GB free beyond the cache:
+
+```
+./02_download.sh background_confirm && ./06_eval.sh ../hey-vesper.tflite confirm_metrics.json confirm --fixed-cutoff 0.65 --fixed-window 3 --confirm-only
+```
+
+`WW_CONFIRM_SHARDS=16,17` limits the shards. The feature cache (`$WW_FEAT/eval/ambient/`) makes a
+rerun instant, and the raw wavs are not needed after the first run.
+
 ## Determinism
 
 Seeds are fixed for: the speaker splits, voice choice and synthesis settings per clip

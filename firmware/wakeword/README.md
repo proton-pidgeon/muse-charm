@@ -49,8 +49,18 @@ firmware-side contract above is the same for every model in the history; only th
 | FRR, clean / hard | n/a | 1.90 % / 9.00 % |
 | FRR by voice source (noisy) | LibriTTS-R speakers 0.6 %, Piper multi-speaker voices 6.4 % | held-out LibriTTS-R speakers 1.00 %, **unseen Piper voices/speakers 4.87 %** |
 | FA / h | 0.38 (10 in 26.18 h: CHiME-6 dev+eval 3 / 9.67 h = 0.31; AudioSet eval 06-15 + 30-31 7 / 16.50 h = 0.42) | **0.22** (3 in 13.58 h: DipCo 2 / 5.34 h = 0.37; AudioSet eval 00-05 1 / 8.25 h = 0.12) |
+| FA / h, fresh confirmatory holdout (addendum #3) | n/a | **0.31** (6 in 19.23 h, AudioSet eval 16-29; Poisson 95 % upper 0.68 / h; untouched by all 26 runs) |
 | TTS hard-negative trigger rate (any detection in the clip) | 9.8 % | 10.6 % (n = 3,520; table below) |
 | General TTS speech trigger rate | n/a | 0.8 % (n = 600) |
+
+**Confirmatory fresh holdout.** The test background above was scored in all 26 runs, so it is
+development-consumed (see the honesty notes). To remove that caveat, `quality-bars.md` addendum
+#3 was committed (`8940347`) before anything was downloaded: score the shipped model once, at the
+frozen point (0.65 / W 3), on AudioSet evaluation shards 16-29, which no run had used. Result:
+**6 false accepts in 19.23 h = 0.31 / h** (bar < 1.0; Poisson 95 % upper bound 0.68 / h), so
+**it passes**. Per shard: 22 and 27 had 2 each, 17 and 20 had 1 each, the other ten had 0. No
+retraining or tuning followed. This covers background audio only; FRR is unchanged (no new
+positives). Details in `metrics.json` (`confirmatory_holdout`).
 
 Background evaluated: **13.58 h** of held-out test audio (DipCo 5.34 h + AudioSet evaluation
 shards 00-05, 8.25 h), never trained on and never tuned on. Validation background: 26.18 h
