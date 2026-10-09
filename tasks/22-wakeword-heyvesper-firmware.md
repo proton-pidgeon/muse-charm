@@ -1,44 +1,47 @@
-# Task 22: "Hey Vesper" wake word in firmware — microWakeWord integration
+# Task 22: "Hey Vesper" wake word in firmware — microWakeWord integration (REVISED 2026-10-09 ~04:50 CDT)
 
 ## Goal
-Replace (or supplement) the "Computer" WakeNet bootstrap with the trained custom "Hey Vesper" microWakeWord model. Saying "Hey Vesper" wakes the board exactly as if the PTT button had been pressed. Push-to-talk keeps working alongside it.
+Replace the crashed "Computer" WakeNet bootstrap with the trained custom "Hey Vesper" microWakeWord model. Saying "Hey Vesper" wakes the board exactly as if the PTT button had been pressed. Push-to-talk keeps working alongside it.
+
+## CRITICAL CONTEXT — READ FIRST
+- **1.0.3 ("Computer" WakeNet) CRASHES ON BOOT.** Flashed to the real board 2026-10-09 ~04:50 CDT: boot-loops with `Guru Meditation Error: Core 1 panic'ed (LoadProhibited)` immediately after WakeNet loads the "Computer" model. This was the SRAM exhaustion risk flagged (but never verified) in task 20's HANDOVER. Board was rolled back to stable 1.0.2.
+- **"Computer" (WakeNet) is DEAD — do NOT keep it as a fallback.** The keep-vs-replace decision from the original task file is settled: REPLACE. Remove the WakeNet integration entirely.
+- **OTA NOW WORKS.** `hatch.host` was fixed to `https://peggy.fly.dev/vesper-node` during the same Studio visit; the board's boot log confirms `update check: up to date (HTTP 200; running 1.0.2, published 1.0.2)`. **When 1.0.4 is built and merged, PUBLISH it to the OTA store** (`vesper-node firmware publish`) — the board will pull it automatically. This supersedes the old "do not publish OTA" constraint.
+- **SRAM is the hard constraint.** microWakeWord (TFLite Micro + 61KB model) has a very different memory profile from WakeNet (~291KB model + heavy runtime), which is why it may succeed where WakeNet failed — but this must be VERIFIED, not assumed. The task is not green until the memory budget is proven.
 
 ## Context
 - Kevin approved "Add Hey Vesper" (2026-10-09 ~04:12 CDT) after the model passed all quality bars.
 - Model: `firmware/wakeword/hey-vesper.tflite` (60,840 bytes), merged as `ef786b1`. Training recipe at `firmware/wakeword/train/`, metrics at `firmware/wakeword/metrics.json`, quality bars at `firmware/wakeword/quality-bars.md`.
-- Current firmware 1.0.3 (merged `8b9239c`) has ESP-SR WakeNet "Computer" embedded. Task 20 details: `hatch/vesper_wakenet.c`, mic tapped at `muse_voice.c` `idle_capture()` (16 kHz mono, 20 ms, I2S), threshold `CONFIG_VESPER_WAKE_THRESHOLD`, `>wake=on|off` and `>wake.threshold=` serial controls. WakeNet "Computer" model is ~291KB in PSRAM via rodata.
-- Board OTA is BROKEN (HTTP hatch.host vs HTTPS-only gate — needs Kevin at Studio for USB flash). Do NOT publish OTA in this task. The USB flash runbook is at `docs/usb-flash-runbook.md` — update it to reference 1.0.4.
+- Previous firmware 1.0.3 (merged `8b9239c`, now abandoned): `hatch/vesper_wakenet.c`, mic tapped at `muse_voice.c` `idle_capture()` (16 kHz mono, 20 ms, I2S), threshold `CONFIG_VESPER_WAKE_THRESHOLD`, `>wake=on|off` and `>wake.threshold=` serial controls.
 - Privacy story: wake-word detection stays 100% on-device. No audio leaves the board until the wake word fires.
 
-## Design decision (Kevin-approved framing)
-"Hey Vesper" is the PRIMARY wake word. Keep "Computer" (WakeNet) as a fallback ONLY if the combined memory/compute budget allows cleanly — the hey-vesper model is only ~61KB vs WakeNet's ~291KB, so both may fit. If keeping both degrades RAM/CPU headroom or complicates the audio path, REPLACE "Computer" with "Hey Vesper" and document why. Document the final choice in HANDOVER.md and `firmware/README.md`.
-
 ## Steps
-1. Integrate microWakeWord (TensorFlow Lite Micro) inference for `hey-vesper.tflite` into the firmware audio path:
+1. REMOVE the WakeNet "Computer" integration cleanly (`hatch/vesper_wakenet.c`, the `wn9_computer_tts` model blob, associated Kconfig). Keep the serial `>wake=on|off` and `>wake.threshold=` controls working, repointed at the new model.
+2. Integrate microWakeWord (TensorFlow Lite Micro) inference for `hey-vesper.tflite`:
    - Reuse the existing mic tap (`muse_voice.c` `idle_capture()`, 16 kHz mono).
-   - Run the TFLite model on the live mic feed at idle. On detection → enter LISTENING (same as PTT press / WakeNet detection): caption/listening UI, capture utterance, normal turn flow.
+   - Run the TFLite model on the live mic feed at idle. On detection → enter LISTENING (same as PTT press): caption/listening UI, capture utterance, normal turn flow.
    - PTT button path untouched.
-2. Decide Computer keep-vs-replace per the design decision above. If kept: both detectors run at idle; either can trigger listening. If replaced: remove the WakeNet integration cleanly (keep the serial `>wake` controls working for the new model).
-3. Memory/CPU: verify the TFLite Micro runtime + 61KB model fits alongside everything else (avatar, Wi-Fi, HTTP, and WakeNet if kept). Measure or bound added RAM/CPU. Report exact numbers; if over budget, report what's over rather than silently degrading.
-4. Sensitivity: expose a tunable threshold for the new model; pick a default informed by the training metrics (FRR 2.93%, 0.31 FA/h). Document how to adjust.
-5. False-trigger handling: wake with no following speech times out gracefully back to idle (no phantom turns, no backend calls) — same as task 20.
-6. UX: on "Hey Vesper" detection, show the listening state on the display (same as PTT/WakeNet).
+3. **Memory budget (the critical gate):** compute the worst-case SRAM/PSRAM footprint of TFLite Micro + the 61KB model + audio buffers, alongside the existing firmware (avatar, Wi-Fi, HTTP). Compare against the ESP32-S3's available internal SRAM. The WakeNet crash was a `LoadProhibited` on Core 1 at model load — identify exactly what allocation pattern caused it and prove microWakeWord avoids it. Report exact numbers. If it doesn't fit, STOP and report — do not ship a crash-looping firmware.
+4. Sensitivity: expose a tunable threshold; default informed by training metrics (FRR 2.93%, 0.31 FA/h). Document adjustment.
+5. False-trigger handling: wake with no following speech times out gracefully back to idle (no phantom turns, no backend calls).
+6. UX: on "Hey Vesper" detection, show the listening state on the display (same as PTT).
 7. Bump firmware version to 1.0.4.
-8. Build green (existing firmware tests + any new ones), adversarial review per the skill gates.
-9. Do NOT flash the real board (Kevin is not at the Studio; USB flash is his Studio-visit step). Do NOT publish OTA.
-10. Update `docs/usb-flash-runbook.md`: the Studio visit now flashes 1.0.4 (with "Hey Vesper") instead of 1.0.3. Note the new binary location.
+8. Build green (existing firmware tests + any new ones), adversarial review per the skill gates. The review MUST include a memory-budget adversarial pass given the 1.0.3 crash.
+9. **Publish 1.0.4 to the OTA store** (`vesper-node firmware publish`) after merge. The board (now on working OTA) will pull it automatically. Verify the board picks it up via the backend firmware-check log.
+10. Update `docs/usb-flash-runbook.md`: note that OTA is now the delivery path; USB flash is fallback only.
 
 ## Done when
-- Firmware 1.0.4 with "Hey Vesper" merged to main (green build + review).
-- Built binary location recorded in HANDOVER.md (for the USB flash).
-- USB-flash runbook updated to 1.0.4.
-- HANDOVER.md updated; board issue closed with dotted Summary.
-- The Computer keep-vs-replace decision documented with the numbers behind it.
+- Firmware 1.0.4 with "Hey Vesper" (WakeNet fully removed) merged to main (green build + review including memory-budget pass).
+- 1.0.4 published to the OTA store.
+- Board pulls 1.0.4 via OTA (verify via backend log: `firmware check` shows the board on 1.0.4).
+- "Hey Vesper" wake verified working (via board logs or Kevin's live test).
+- HANDOVER.md updated; board issue #20 closed with dotted Summary.
 
 ## Constraints
 - Firmware work on the Studio only (`phylax fleet creds` must read valid).
 - No audio leaves the device before wake-word detection.
-- No OTA publish. No secrets in logs.
-- Known model confusables (from task 21): "a vesper" 13.8%, "hey whisper" 8.8%, "hey Esther" 5% — Kevin accepted these; no need to re-litigate, but the threshold default should reflect them.
+- No secrets in logs.
+- Known model confusables: "a vesper" 13.8%, "hey whisper" 8.8%, "hey Esther" 5% — Kevin accepted these.
+- If microWakeWord cannot fit in SRAM either, do NOT force it — report back with the numbers and alternative approaches.
 
 ## Status (impl-22-wakeword-heyvesper-fw, branch `impl/22-wakeword-heyvesper-fw`, firmware 1.0.4)
