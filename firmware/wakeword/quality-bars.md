@@ -62,7 +62,7 @@ Detection is scored on the whole clip (any detection = accept).
 | Source | What it is | Duration |
 |---|---|---|
 | DipCo (`dinner_party_eval/testing_ambient`, precomputed by microWakeWord) | far-field dinner-party conversation, 4 people | 5.33 h |
-| AudioSet *evaluation* split, parquet shards 00-05, concatenated into continuous tracks | everyday sound: speech, TV, music, household, outdoor | ≈ 9-10 h (exact figure recorded in `metrics.json`) |
+| AudioSet *evaluation* split, parquet shards 00-05, concatenated into continuous tracks | everyday sound: speech, TV, music, household, outdoor | 6 × 500 clips ≈ 8.3 h (exact figure recorded in `metrics.json`) |
 
 The training negatives are microWakeWord's `speech` (VOiCES), `dinner_party` (CHiME-6 *train*)
 and `no_speech` (FMA-medium, FSD50K, WHAM) sets, plus our TTS hard negatives. None of them
@@ -71,9 +71,11 @@ if they come in under the planned amount, that is stated.
 
 ### Validation (used for every choice)
 
-- Positives and hard negatives from the val speakers, augmented like train.
+- Positives and hard negatives from the val speakers. In training, they're augmented like
+  train. For the operating-point choice, they use the "noisy" condition's parameters (p, SNR,
+  gain), but drawn from the **train** RIR/noise pools. Validation never touches a test pool.
 - Ambient: CHiME-6 dev+eval (`dinner_party_eval/validation_ambient`, 9.67 h) + AudioSet
-  evaluation shards 30-31 (≈ 3 h).
+  evaluation shards 30-31 (2 × 500 clips ≈ 2.8 h).
 
 ## Operating-point rule (validation only)
 
