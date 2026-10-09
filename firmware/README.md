@@ -916,8 +916,8 @@ unchanged and works alongside it.
   | flash data (`.rodata`) | 466,504 | 790,004 | 549,128 (the model is 60,840 of it) | |
   | internal DIRAM, static | 172,913 | 191,133 | **173,105** (+192 over 1.0.2) | ~191,300 |
   | external RAM `.bss` | 62,696 | 62,696 | 66,904 (+4,208: the engine's state) | |
-  | run-time internal RAM | 0 | ~16 KB (WakeNet's own allocations) | < 1 KB (frontend scraps; arena, frontend buffers and engine state are in PSRAM) | ~17 KB |
-  | run-time PSRAM | 0 | ~324 KB (Espressif's table) | 32 KB arena (24,608 B used on the 64-bit host) + ~3 KB frontend | ~360 KB |
+  | run-time internal RAM | 0 | ~16 KB (WakeNet's own allocations) | 1,424 B (three small frontend tables; arena, frontend buffers and engine state are in PSRAM; itemised below) | ~17.5 KB |
+  | run-time PSRAM | 0 | ~324 KB (Espressif's table) | 32 KB arena (24,608 B used on the 64-bit host) + 9,948 B frontend (9,620 kept, 328 freed at init) | ~366 KB |
   | CPU on core 1 | 0 | ~3 ms per 32 ms chunk (Espressif), up to ~9% | ~24,800 MACs per 30 ms inference (counted from the model's layers) = 0.83 M MAC/s: 3.5% of a 240 MHz core even at a pessimistic 10 cycles per MAC, plus the frontend's 512-point FFT every 10 ms; not yet measured on the board | sum |
   | false wakes per hour | 0 | not measured (Espressif's in-house figure only) | 0.31 / h on the fresh holdout | the two rates added |
 
@@ -987,7 +987,8 @@ unchanged and works alongside it.
   >wake                      @wake {"state":"on","model":"hey_vesper","threshold":0.650,"window":3,
                                     "wakes":3,"turns":2,"no_speech":1,"pressed":0,"not_ready":0,
                                     "detect_us":{"avg":...,"max":...},"score_max":0.412,"arena":...,
-                                    "floor_db":-62.4,"stack_free":...}
+                                    "floor_db":-62.4,"stack_free":...,
+                                    "heap":{"int":...,"int_min":...,"int_largest":...,"psram":...}}
   >wake.threshold=0.75       @wake.threshold 0.750            (fewer false wakes, more misses)
   >wake.threshold=0.40       @wake.threshold 0.500 (clamped to 0.50-0.99)
   >wake.threshold=65         @wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now 0.750)
@@ -996,7 +997,9 @@ unchanged and works alongside it.
   ```
 
   `score_max` is the highest window score since the last reset (after the last turn): compare
-  it with the threshold to see how close the room came to a false wake. The values are kept in
+  it with the threshold to see how close the room came to a false wake. `heap` is free internal
+  RAM now, its lowest point since boot (`int_min`: read it after a few turns to see how close a
+  turn came to running internal RAM out), its largest free block, and free PSRAM. The values are kept in
   NVS (`muse:wake_hv_thr` u16 permille, a new key so 1.0.3's WakeNet threshold `muse:wake_thr`
   never applies to this model; `muse:wake_on` u8 as before) and applied before the next
   inference on the voice task (atomics, so the engine is only ever called from one task). The
@@ -1012,19 +1015,168 @@ unchanged and works alongside it.
   20,000-stream fuzz) under ASan/UBSan. `make -C firmware wake-host-check` is the end-to-end
   pipeline check above (needs network once and the task 21 venv/audio).
 
+#### Memory budget and the 1.0.3 crash
+
+**What happened.** Firmware 1.0.3 (WakeNet "Computer"), USB-flashed on 2026-10-09 at about 04:50
+CDT, boot-looped with `Guru Meditation Error: Core 1 panic'ed (LoadProhibited)` right after
+WakeNet loaded its model. The board went back to 1.0.2. **No serial capture of the panic
+survives.** I searched `~/builds/muse-charm`, `/tmp` and `~/.claude` for "LoadProhibited" and
+found only the task file's description, so there is no PC, EXCVADDR or backtrace to decode.
+
+**Where it ran.** `muse_glue.c` `boot_task` ("muse_boot": **core 1**, 8,192 B internal stack)
+calls `muse_app_run()`, which calls `muse_voice_start()`, which calls `vesper_wakenet_init()`.
+That function ran `srmodel_load()` (esp-sr's `MODEL_LOADER: Successfully load srmodels` line is
+"the model loaded"), then `create()`, then 8 timed `detect()` calls. That fits a core 1 panic
+"immediately after the model loads". The voice task (core 1, PSRAM stack) only starts after
+init returns.
+
+**Most likely cause: not proven.** Ranked by the evidence I could find:
+
+1. **A fault inside esp-sr's closed-source WakeNet `create()`/`detect()`, called from 1.0.3's
+   init on the boot task.** The timing and the core both point here. The exact faulting
+   instruction can't be known without the panic dump. Disassembling esp-sr 2.5.5's prebuilt
+   `libwakenet.a` (the one 1.0.3 linked) turned up two concrete hazards:
+   - `dl::audio::Fbank::Fbank()` (reached from `WakeNetX::setup_frontend()` in `create()`)
+     calls `heap_caps_aligned_alloc(16, n, 0x804 = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)` and
+     stores the result without a NULL check. The `dl_rfft_f32_init`, `win_func_init` and
+     `mel_filter_init` results go unchecked the same way. An internal-RAM-only allocation that
+     returns NULL and is later dereferenced is exactly a `LoadProhibited`.
+   - The libraries are prebuilt against newlib headers (`libdl_lib.a` and
+     `libc_speech_features.a` reference `__getreent`), but this firmware is ESP-IDF v6.0.1 with
+     picolibc (`CONFIG_LIBC_PICOLIBC=y`, newlib compatibility shim). ESP-IDF's own Kconfig help
+     for that shim warns that prebuilt newlib libraries touching `struct _reent` "may cause
+     memory corruption on the task stack". No esp-sr build had been run on IDF 6 before 1.0.3.
+2. **Internal-SRAM exhaustion as such** (the task file's working theory): **low confidence.**
+   The board measured 119 KB of internal heap free (62 KB largest block) at idle with Wi-Fi up
+   (`/tmp/ptt-run.log`, 2026-10-08, Vesper firmware before task 13). 1.0.3 added 18,220 B of
+   static internal RAM, plus Espressif's 16 KB at WakeNet start, and init runs early in boot,
+   before Wi-Fi and TLS. That much should fit. It only causes a crash if WakeNet's real internal
+   use is far above Espressif's table, or fragmentation starved one of the unchecked
+   allocations above.
+3. **Init stack.** WakeNet's create and detect ran on muse_boot's 8 KB stack, even though 1.0.3
+   gave the voice task 12 KB "for WakeNet's detect". The canary only checks at context
+   switches, so an overflow would corrupt a neighbouring block and fault later. But no stack
+   frame in the esp-sr libraries is larger than 448 B, so this is low to medium.
+
+Confidence that the root cause is identified: **low**. Confidence that 1.0.4 doesn't share it:
+**high for the mechanisms above**, because 1.0.4 has none of them:
+
+- There are no prebuilt libraries in the wake path. TFLite Micro, esp-nn and the microfrontend
+  are compiled from source with this toolchain and picolibc headers. The only prebuilt archive
+  linked is `libesp_new_jpeg.a`, which 1.0.2 also links.
+- Every run-time allocation is NULL-checked, and every failure turns the wake word off with one
+  `wake word off: ...` log line. Push to talk keeps working and nothing crashes.
+- Large buffers are in PSRAM only. The 32 KB arena has **no internal-RAM fallback** (1.0.4's
+  first cut fell back to internal RAM; removed). No PSRAM means no wake word.
+- The engine's call depth was measured: init, 50 feeds and a reset need **2,168 B of stack**
+  (host, painted-stack probe). The boot log prints the boot task's unused stack after init.
+
+**1.0.4 static memory** (`esp_idf_size` on `muse-gadget.map`, fresh `b1a3822` tree,
+`scratch/sdk-impl-22-r2`):
+
+| | 1.0.2 | 1.0.3 | 1.0.4 |
+|---|---|---|---|
+| internal DIRAM used, of 341,760 | 172,913 | 191,133 | **173,105** (`.text` 104,675, `.data` 25,818, `.bss` 41,584, vectors 1,028); 168,655 left for the heap |
+| external RAM `.bss` | 62,696 | 62,696 | 66,904 |
+| wake archives' DIRAM | 0 | (esp-sr/esp-dl) | esp-tflite-micro 32 B, esp-nn 52 B, microfrontend 0 B; engine scalars in libmuse about 100 B |
+
+**1.0.4 run-time allocations on the wake path.** All of them happen once, at boot, in
+`vesper_wakeword_init()`. Feeding and `vwe_reset()` allocate nothing: a reset rebuilds the
+interpreter in the same arena and static memory.
+
+| allocation | bytes | caps / placement | if it fails |
+|---|---|---|---|
+| TFLM tensor arena | 32,768 (24,608 used, host) | `heap_caps_aligned_alloc(16, ..., MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT)`: PSRAM only | `wake word off: no PSRAM for a 32768 B tensor arena` |
+| frontend window coefficients, input, output | 3 × 960 | `MALLOC_CAP_SPIRAM \| 8BIT` first (built with `USE_ESP32`), `malloc` fallback | `FrontendPopulateState()` returns 0, then `wake word off: the audio frontend didn't start (memory)` |
+| FFT input, output, kissfft scratch | 1,024 + 2,056 + 2,836 | same | same |
+| filterbank channel starts, weight starts, widths, work | 82 + 82 + 82 + 328 | same | same (upstream checks every one except `work`; it can only be NULL if PSRAM *and* internal RAM both fail) |
+| filterbank temporaries (freed before init returns) | 164 + 82 + 82 | same | same |
+| PCAN gain table | 250 | same | same |
+| **filterbank weights + unweights** | **632 + 632** | plain `calloc`: **internal** (below `SPIRAM_MALLOC_ALWAYSINTERNAL` = 4,096; PSRAM fallback) | same |
+| **noise-reduction estimate** | **160** | plain `calloc`: **internal** | same |
+| engine state: resolver 480, interpreter 212, resource-variable arena 2,048, quantiser table 1,024, frontend state 136, stacker 124, last input 120, detector 44 | 4,188 static | `EXT_RAM_BSS_ATTR`: PSRAM `.bss` | static, can't fail |
+| the model | 60,840 | `.rodata` (`vesper_hv_model.S`), mapped into PSRAM (`SPIRAM_RODATA`) | `wake word off: no model in this image` |
+| voice task stack | 12,288 (1.0.2: 6,144) | `MUSE_BIG_CAPS`: PSRAM, as in 1.0.2 | `muse_voice_start()` returns `ESP_ERR_NO_MEM`, the 1.0.2 path |
+| init stack | 2,168 used (host) | the existing muse_boot task (8,192 B, internal); nothing new is allocated | the boot log prints what's left |
+
+So the wake word costs **1,424 B of internal heap** (plus three heap block headers) and
+**+192 B of static internal RAM** over 1.0.2: about **1.7 KB** in total. In PSRAM it costs
+32,768 + 9,620 + 4,188 + 6,144 (the larger voice stack) = about 52 KB, out of about 5.4 MB free.
+
+**Headroom.** The ESP32-S3 has 512 KB of SRAM. After the 32 KB instruction cache, the 64 KB data
+cache and the ROM's reservations, the linker gives this app 341,760 B of DIRAM. 1.0.4's static
+use leaves 168,655 B to become the internal heap.
+
+- **At idle:** about 119 KB was free on the board with Wi-Fi up (above). 1.0.4 takes 1.7 KB of
+  that, about 1.4%, so expect about 117 KB free. The boot log now prints the real figure: the
+  free internal heap, its largest block and its low-water mark after wake init.
+- **During a turn** (Wi-Fi, HTTPS to Peggy, MP3 decode, avatar, audio): the big consumers are
+  configured into PSRAM. `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` puts the 16 KB in and out TLS
+  buffers there, and `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` puts Wi-Fi and lwIP buffers there
+  when it can. NimBLE uses external memory. The `muse_chat` task (TLS and MP3, 32 KB stack) and
+  the voice task have PSRAM stacks. Any `malloc` over 4 KB tries PSRAM first, and 64 KB of
+  internal RAM is held back for DMA and internal-only callers (`SPIRAM_MALLOC_RESERVE_INTERNAL`).
+  The wake engine allocates **nothing** during a turn: it isn't fed, and its memory was taken
+  at boot. So a turn on 1.0.4 draws the same internal RAM as a turn on 1.0.2, which runs turns
+  on the board. The only difference is the 1.7 KB already taken at boot.
+- **Not measured:** the internal low-water mark of a real turn, on 1.0.2 or 1.0.4. The 31 KB
+  free seen during a turn in the stock Meta build (Noise transport and websocket included) is
+  the worst figure on record. The 5 s heartbeat (`int=free/largest`) and `>wake`'s
+  `heap.int_min` measure it on the board. Read them after a few turns.
+
+**If 1.0.4 still crash-loops after the OTA, the board returns to 1.0.2 by itself.**
+
+- The bootloader is built with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y` (the SDK's own
+  `sdkconfig.defaults:96`, unchanged by the patch set; confirmed in this build's
+  `config/sdkconfig.h`). The board's bootloader was written by the bring-up full flash of this
+  tree (`docs/aipi-lite-bringup.md`), so it should have the same setting. That hasn't been
+  checked on the device.
+- An OTA-installed image boots as `PENDING_VERIFY`. It is marked valid only by
+  `ota_verify_task()` in `main/app.c` (patches `0002`/`0005`), and only once Wi-Fi is up and the
+  node backend has answered an update check (`update_channel_ok()`, which calls
+  `vesper_node_update_channel_ok()` in `muse_chat_vesper.c`).
+- The first update check is no earlier than `VO_FIRST_CHECK_MS` = 10 s after the node is
+  claimed and online (`hatch/vesper_ota.h`). `muse_hatch_start()` itself runs after
+  `muse_voice_start()`, so wake init always finishes before the image can be validated.
+- A panic reboots at once (`CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y`, delay 0). The bootloader
+  then finds the slot still `PENDING_VERIFY`, marks it aborted and boots the other slot (1.0.2).
+  A hang instead of a panic is caught after `OTA_VERIFY_TIMEOUT_US` = 300 s:
+  `esp_ota_mark_app_invalid_rollback_and_reboot()`.
+- Back on 1.0.2, the boot log says `rolled back here before: 1.0.4`, and 1.0.2 won't install
+  1.0.4 again (`VO_SKIP_REJECTED`, `hatch/vesper_ota.c` `vo_check_result()`). There's no OTA
+  loop.
+- **Not covered:**
+  - A crash that first happens *after* validation, such as on the first wake or the first
+    turn. The board then reboots into 1.0.4, which is valid by then. Recovery: `>wake=off` on
+    serial (kept in NVS; the engine is no longer fed), or publish a 1.0.5. Nodes refuse a
+    downgrade, so re-publishing 1.0.2 doesn't help. Or flash 1.0.2 by USB
+    (`docs/usb-flash-runbook.md`).
+  - Any USB-flashed image. It never boots as `PENDING_VERIFY`, so the bootloader never rolls
+    it back. That is most likely why 1.0.3, flashed by USB, boot-looped instead of reverting.
+
 ### On-device check (task 22: "Hey Vesper", human gate)
 
-Not done by the agent: the board is reachable only by USB until `hatch.host` is fixed (see
-`docs/usb-flash-runbook.md`), and flashing is Kevin's Studio step. Steps:
+Not done by the agent. Since 2026-10-09 the board's `hatch.host` is
+`https://peggy.fly.dev/vesper-node` and its boot log shows `update check: up to date`, so 1.0.4
+is delivered **by OTA** after the merge. USB is the fallback (`docs/usb-flash-runbook.md`).
+Steps:
 
-1. **Deliver 1.0.4** by USB as in `docs/usb-flash-runbook.md` (app partition only), then fix
-   `hatch.host` so later updates arrive by OTA.
+1. **Publish 1.0.4** (Studio, after the merge; the orchestrator's step):
+   `cd backend && uv run --locked vesper-node firmware publish /Users/k3v/builds/muse-charm/scratch/firmware-1.0.4/muse-gadget.bin`.
+   The board installs it at its next check (boot, every 6 h, or `>ota.check`). Watch the
+   backend log for `firmware check: node=... running=1.0.4 ...`. If 1.0.4 crashes before it is
+   validated, the board rolls back to 1.0.2 by itself (*Memory budget and the 1.0.3 crash*,
+   above): the backend then still sees `running=1.0.2`, and 1.0.2's boot log says
+   `rolled back here before: 1.0.4`.
 2. **Boot log** (serial monitor): `vesper_wake: wake word on: "Hey Vesper" (microWakeWord,
    60840 B model), threshold 0.650, window 3; 20 ms chunk with an inference: N us avg / M us max
    at boot`, then `wake word memory: arena X of 32768 B used (PSRAM); the engine took ... B
-   internal, ... B PSRAM; free now ...`. Record the numbers here (they replace the CPU bound and
-   the host arena figure above), and check the `ready: free heap ... internal` line. `>status`
-   shows `"wake":{"state":"on",...}`.
+   internal, ... B PSRAM; free now ... B internal (largest ..., lowest since boot ...), ... B
+   PSRAM; init stack ... B unused`. Record the numbers here (they replace the CPU bound, the
+   host arena figure and the 1,424 B internal estimate above). Also note the 5 s heartbeat's
+   `int=` figures and `OTA image validated (Wi-Fi up, update server answered)`. `>status`
+   shows `"wake":{"state":"on",...}`. After a few turns, `>wake`'s `heap.int_min` is the
+   internal low-water mark of a real turn: write it down.
 3. **Say "Hey Vesper"**, pause, then ask something: LISTENING at once, the transcript, a reply.
    The log shows `wake word heard (score ...)`, `wake: speech after ...s`, `wake: recorded ...s`.
 4. **Say "Hey Vesper" and nothing else:** LISTENING for 5 s, then idle with no chirp; the log
