@@ -30,3 +30,14 @@ Add trigger-word activation to the AiPi Lite (ESP32-S3) using Espressif's ESP-SR
 - Firmware work on the Studio only (`phylax fleet creds` must read valid).
 - No audio leaves the device before wake-word detection — verify this in the design, not just assert it.
 - No secrets in logs. No custom training in this task (that's task 21).
+
+## Status (impl-20-wakeword, branch `impl/20-wakeword`, firmware 1.0.3)
+Design and numbers: `firmware/README.md`, *Wake word (task 20)*.
+
+- [x] 1. WakeNet `wn9_computer_tts` in the AIPI build (patch `0007`, `hatch/vesper_wakenet.c`); mic tapped at `muse_voice.c` `idle_capture()` (16 kHz mono, 20 ms, I2S); runs at idle only; detection enters LISTENING and the normal turn flow; PTT untouched.
+- [x] 2. Memory/CPU: image 2,035,712 -> 2,691,072 B (64% of the 4 MiB slot); model 291,038 B in the image (PSRAM via rodata); static internal +18,220 B; WakeNet runtime and detect time logged at boot and in `>status` (Espressif: ~3 ms per 32 ms chunk, at most ~9% of core 1). Internal RAM is the budget to watch; confirm on the device (human gate).
+- [x] 3. Sensitivity: `CONFIG_VESPER_WAKE_THRESHOLD=650` (Espressif's tuning) plus `>wake.threshold=0.50-0.99` / `>wake=on|off` in NVS, clamped and validated (host-tested).
+- [x] 4. False triggers: no backend call before a speech onset; no speech in 5 s means back to idle quietly with zero backend calls (state machine + host tests).
+- [x] 5. UX: the same LISTENING mode and caption as PTT; the screen wakes.
+- [x] 6. Build green: `make -C firmware test` (incl. `test_vesper_wake`, log hygiene); fresh `b1a3822` tree, `apply-sdk.sh` idempotent, AIPI build with 0 warnings. Adversarial review: orchestrator's gate.
+- [ ] 7. **HUMAN GATE (on-device):** OTA 1.0.3 (`vesper-node firmware publish`; no USB flash and no partition change needed); read the boot `vesper_wake` lines (detect us, memory, free internal); say "Computer" + a question and get a reply; say "Computer" alone and see a quiet 5 s timeout with no `/turn` in the backend log; PTT turn plus a press during a wake listen; a false-trigger soak of a few hours in a normal room (`>wake` counts), tuning `>wake.threshold` if needed. See README *On-device check (task 20)*.

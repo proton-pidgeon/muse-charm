@@ -9,9 +9,9 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `apply-sdk.sh <SDK_DIR>` | Idempotent. Deletes the Meta transport, applies `sdk-patches/*.patch`, installs `hatch/` and the avatar, and checks that `main/voice.c` is unchanged |
 | `sdk-patches/delete.txt` | Files the patch set removes from the SDK |
 | `sdk-patches/000N-*.patch` | Edits to tracked SDK files (`git apply` format against `b1a3822`) |
-| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11), the firmware update check (task 13) and the idle announcement poll (task 18), installed as `<SDK>/esp32/components/muse/vesper/` |
+| `hatch/` | The Vesper `muse_hatch_*` backend (task 09), its reply speech (task 10), the claim flow, node credential and BLE host (task 11), the firmware update check (task 13), the idle announcement poll (task 18) and the wake word (task 20), installed as `<SDK>/esp32/components/muse/vesper/` |
 | `hatch/VERSION` | The firmware version (`MAJOR.MINOR.PATCH`) the build stamps into the image (task 13); bump it for every release |
-| `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers, the update check and the announcement parser/scheduler, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
+| `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers, the update check, the announcement parser/scheduler and the wake word's decisions, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
 | `avatar/` | The Vesper "Iconic" cyborg-face avatar (task 14; it replaced task 04's owl, now retired) |
 | `Makefile` | `make -C firmware test`, `live-turn`, `live-claim` and `live-ota` (host only, no ESP-IDF) |
 
@@ -37,7 +37,10 @@ stays a re-clonable upstream at `b1a3822`, and `apply-sdk.sh` rebuilds the Vespe
      the update server has answered, the console's `>ota.check`, `vesper/vesper_ota.c` in the
      build, and `PROJECT_VER` from `hatch/VERSION` (see *Firmware updates* below);
    - since task 18, `0006`: `vesper/vesper_announce.c` in the build (see *Announcements*
-     below).
+     below);
+   - since task 20, `0007`: the wake word. `espressif/esp-sr` (AIPI only), the model packed
+     into the image, `CONFIG_VESPER_WAKE*`, the idle WakeNet feed and the wake turn in
+     `muse_voice.c`, `>wake` on the console and in `>status` (see *Wake word* below).
 
    `0004` edits lines that `0002` added (in `app.c` and `muse_glue.c`), so `apply-sdk.sh`
    can't ask "is `0002` applied?" of `0002` alone once `0004` is on top. It asks it of a prefix
@@ -83,7 +86,10 @@ build. With task 11's BLE host (NimBLE is linked and started again) it is 2,035,
 bytes signed (2,031,616 unsigned; the signed image is padded to the signature block), so an
 update always fits the other 4 MiB slot. Task 14's avatar swap (owl to Iconic face) leaves it
 at 2,035,712 bytes. Task 18's announcement poll (firmware 1.0.2) keeps it at 2,035,712 bytes
-signed (`0x1f1000`, 51% free; fresh `b1a3822` tree, 0 compiler warnings).
+signed (`0x1f1000`, 51% free; fresh `b1a3822` tree, 0 compiler warnings). Task 20's wake word
+(firmware 1.0.3) takes it to 2,691,072 bytes (`0x291000`, 36% of the 4 MiB slot free, so an
+update still fits the other slot): esp-sr, esp-dl and the 291,038-byte "Computer" model, which
+now lives in the app image (see *Wake word*).
 
 **Kept byte-identical:**
 
@@ -839,6 +845,180 @@ node when they fall due. The node asks for them (`docs/node-wire-protocol.md`,
   along with the note. The hatch task and the voice task both write to the speaker
   (`muse_audio_write` has one static stereo buffer) only if a bench chirp/MP3 test is requested
   during an announcement.
+
+### Wake word (task 20)
+
+Saying **"Computer"** starts a turn on the AIPI as a talk press does. It uses ESP-SR WakeNet
+with Espressif's built-in `wn9_computer_tts` model, on the device only. Push to talk is
+unchanged and works alongside it. Task 21's custom "Hey Vesper" model will replace it later
+(`CONFIG_VESPER_WAKE_MODEL`).
+
+- **Where it runs.** `muse_voice.c` (patch `0007`) gives every clean idle mic chunk
+  (`idle_capture()`, 16 kHz mono, 20 ms) to `hatch/vesper_wakenet.c`. That code regroups the
+  chunks into WakeNet's own chunk size (`get_samp_chunksize()`, asked at boot rather than
+  assumed; `vw_reblock_*`, host-tested) and calls `detect()` whenever a block is full. It runs
+  inline on the voice task (core 1, priority 6, the PSRAM stack raised from 6 KB to 12 KB for
+  WakeNet), so there is no second task and no hand-off to race. Because only `idle_capture()`
+  feeds WakeNet, a wake can't fire during a recording, a reply or a held-note send. It is also
+  kept quiet:
+  - while Muse's own playback tail settles (`s_settle`, 200 ms, as for the pre-roll);
+  - while an announcement is said, and for 200 ms after (`vesper_node_announcing()`, new in
+    `muse_chat_vesper.c`);
+  - after every turn, playback or listen, WakeNet's window is cleared (`pre_reset()` calls
+    `vesper_wakenet_reset()`), so nothing heard before then counts toward a wake.
+
+  While Muse rests (asleep on battery: codecs off) there is no capture, so the wake word is
+  off then. Asleep on USB power it listens, and a wake turns the screen on.
+- **CPU.** WakeNet ships only as Xtensa libraries (`libwakenet.a`), so it can't be timed on the
+  host. Espressif's figure for WakeNet9 on the S3 at 240 MHz is 3.0 ms per 32 ms chunk for two
+  channels (esp-sr *Benchmark*), and we feed one channel: at most about 9% of core 1, which
+  runs the voice task and LVGL. The I2S RX DMA holds 90 ms (6 x 240 frames), so a 3 ms detect
+  inside the 20 ms loop drops no audio. The firmware measures it as well: the boot log times
+  8 detections (`detect N us avg / M us max at boot`), and `>status` / `>wake` keep a running
+  average, the maximum and the voice task's free stack (`detect_us`, `stack_free`).
+- **The listen after a wake** (`hatch/vesper_wake.c`, pure C, host-tested;
+  `wake_record()`/`wake_turn()` in `muse_voice.c`):
+  1. On detection: the screen wakes, `MUSE_MODE_LISTENING` with the caption `LISTENING...`,
+     as for a press. `can_record()` runs exactly as for a press: not set up gives `SET UP MUSE
+     FIRST`, and offline the note is kept as a held note.
+  2. The note is recorded **locally** into `s_rec` from the detection on. Nothing is sent and
+     `muse_hatch_turn_begin()` is not called.
+  3. **Onset gate:** 4 chunks in a row (80 ms) at least 10 dB above the room's noise floor
+     and louder than -60 dBFS. The floor is tracked over the idle feed (`vw_floor_*`: it
+     follows the room down quickly and creeps up at 2.5 dB/s, so talk doesn't become "the
+     floor"). The first 200 ms after the detection never count as onset, because that is the
+     tail of "Computer" itself.
+  4. **At onset:** the note is cut to start 300 ms before the onset (never before the
+     detection). Then it goes live as a press would: `go_live()`, the kept audio, then
+     streaming, live captions, "Muse in reach" catch-up and held notes.
+  5. **End:** 1.0 s of trailing silence (below floor + 6 dB), or `MAX_SECS` (15 s). Then
+     `finish_note()` and `hatch_reply()` run, exactly the press path (end chirp, reply,
+     barge-in, held notes).
+  6. **No speech within 5 s:** back to idle with an empty caption. There is no chirp, nothing
+     is sent and nothing is kept (`wake: no speech; back to idle (nothing sent)`).
+  7. **A press during the listen** wins. The press is left queued and the listen is dropped.
+     If speech had already started, the half-sent turn is cancelled. The press then records as
+     a fresh press. The pre-roll ring is cleared first, so it never carries the old wake word.
+- **Privacy argument** (the task's constraint, "verify it in the design"):
+  - Before detection, the mic feed goes to WakeNet, the noise-floor estimate and the stock
+    pre-roll ring, all in RAM on the board. The pre-roll ring is used only by a button press,
+    as before task 20.
+  - A wake turn never reads the pre-roll ring. Its audio is counted in chunks from the
+    detection, and `vw_listen_lead()` is never negative. So no audio from before the wake word
+    is ever in a wake turn.
+  - The only network step of a turn is `go_live()`, which calls `muse_hatch_turn_begin()`.
+    `wake_record()` calls it only when `vw_listen_may_contact_backend()` is true, which is from
+    the onset on.
+  - A false wake (TV, a cough, "computer" in passing) with no speech after it costs a 5 s
+    on-screen listen and zero backend calls.
+  - The host tests check all of this on a model of `wake_record()`'s steps
+    (`hatch/test/test_vesper_wake.c`): no backend call before onset; a silent, clicking or
+    noisy listen ends `VW_NO_SPEECH` with 0 calls after exactly 5 s; the first chunk sent is
+    `>= 0` (the detection); a turn is contiguous and ends 1 s after the last word or at 15 s.
+    20,000 random rooms keep all of these properties.
+- **Model delivery: in the app image, not a partition.** esp-sr's `srmodel_load(const void *)`
+  reads its packed model format (`srmodels.bin`) from any memory pointer. Its usual
+  `esp_srmodel_init("model")` only mmaps a `model` partition and calls that same function.
+  So `components/muse/CMakeLists.txt` copies only `model/wakenet_model/<CONFIG_VESPER_WAKE_MODEL>`
+  out of the managed esp-sr component and packs it with esp-sr's own `pack_model.py` at
+  configure time. It links it into `.rodata` 16-byte aligned (`vesper_srmodels.S`,
+  `.incbin`), and `vesper_wakenet_init()` hands it to `srmodel_load()`. The result:
+  - an **OTA update delivers the wake word**, with no partition-table change and no USB flash;
+  - the live board on 1.0.2 gets it from `vesper-node firmware publish` of 1.0.3 like any
+    update;
+  - `partitions_muse.csv` is unchanged, and esp-sr's own "flash `srmodels.bin` to the `model`
+    partition" step never triggers (there is no `model` partition).
+
+  If the model is missing or WakeNet can't start (memory, an unexpected rate or channel
+  count), the firmware logs one `wake word off: ...` line (`E vesper_wake`). `>status` then
+  shows `"state":"no_model"` or `"failed"`, and push to talk is unaffected.
+- **Build config (AIPI only).** `components/muse/idf_component.yml` pulls
+  `espressif/esp-sr` 2.5.5 only when `MUSE_BOARD_ID == "aipi"` (it brings `esp-dl` 3.3.13
+  and `dl_fft`). `CONFIG_VESPER_WAKE` (default y) depends on the AIPI, `MUSE_HATCH` and
+  PSRAM. `devices/sdkconfig.muse-aipi` selects only `CONFIG_SR_WN_WN9_COMPUTER_TTS`, with
+  MultiNet off (`SR_MN_*_NONE`) and esp-sr's NS/VAD left at their model-free WebRTC
+  defaults. Only WakeNet is used: no AFE, AEC, NS or VADNet. WakeNet runs in
+  `DET_MODE_95`; `DET_MODE_90` is WakeNet10-only.
+- **Sensitivity.** The threshold defaults to **0.65**
+  (`CONFIG_VESPER_WAKE_THRESHOLD=650`, permille), which is Espressif's own tuning for this
+  model (`_MODEL_INFO_`: 0.648/0.650). Why not stricter: the two-stage design makes a false
+  wake cheap (a 5 s listen on screen, nothing sent), while every missed "Computer" costs a
+  repeat. Raising the threshold without field data trades a certain rise in misses for an
+  unknown drop in false wakes. The false-trigger soak (human gate below) is where it gets
+  tuned. On the device, with no rebuild, over the serial console:
+
+  ```
+  >wake                      @wake {"state":"on","model":"wn9_computer_tts","threshold":0.650,"chunk":512,
+                                    "wakes":3,"turns":2,"no_speech":1,"pressed":0,"not_ready":0,
+                                    "detect_us":{"avg":...,"max":...},"floor_db":-62.4,"stack_free":...}
+  >wake.threshold=0.70       @wake.threshold 0.700            (fewer false wakes, more misses)
+  >wake.threshold=0.40       @wake.threshold 0.500 (clamped to 0.50-0.99)
+  >wake.threshold=65         @wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now 0.700)
+  >wake=off                  @wake off                        (push to talk only)
+  >wake=on                   @wake on
+  ```
+
+  The values are kept in NVS (`muse:wake_thr` u16 permille, `muse:wake_on` u8) and applied
+  before the next WakeNet chunk on the voice task (handed over through atomics, so WakeNet is
+  only ever called from one task). The parser (`vw_parse_threshold`, host-tested) accepts a
+  decimal from 0 to 1 with at most 4 decimals. It clamps to 0.50-0.99 and refuses anything
+  else: signs, spaces, percent or permille forms, exponents. A stored value out of range is
+  clamped on boot. `>status` carries the same object as `"wake"`.
+- **Memory** (`idf.py size`, fresh `b1a3822` tree, 1.0.2 vs 1.0.3):
+
+  | | 1.0.2 | 1.0.3 | change |
+  |---|---|---|---|
+  | `muse-gadget.bin` | 2,035,712 | 2,691,072 | +655,360 (64% of the 4 MiB slot) |
+  | flash code (`.text`) | 1,417,820 | 1,701,300 | +283,480 (esp-dl 138,898, libdl_lib 60,315, libwakenet 28,098, ...) |
+  | flash data (`.rodata`) | 466,504 | 789,988 | +323,484 (the model is 291,038 of it) |
+  | internal DIRAM, static | 172,913 | 191,133 | +18,220 (IRAM `.text` +7,100, `.data` +5,992, `.bss` +5,128: libdl_lib 7,725, esp-dl 9,812) |
+  | external RAM `.bss` | 62,696 | 62,696 | 0 |
+
+  At run time: the AIPI maps all `.rodata` into PSRAM (`CONFIG_SPIRAM_RODATA`), so the
+  291 KB model is in PSRAM from boot. WakeNet's own allocations are about 16 KB internal and
+  324 KB PSRAM by Espressif's table. They are measured on the board by the boot log line
+  `wake word memory: model N bytes in the image; WakeNet took X B internal, Y B PSRAM; free
+  now ... internal (largest ...), ... PSRAM`, which prints right after WakeNet starts. Add
+  the 1 KB detection block and the voice task's stack growing by 6 KB (in PSRAM). PSRAM
+  (8 MB) has room. **Internal RAM is the budget to watch:** about 18 KB static plus about
+  16 KB at run time comes out of the RAM Wi-Fi, BLE and the display share. The existing
+  `ready: free heap N internal` line and the new line above show what is left. The human gate
+  checks that BLE setup and a turn still work. If internal RAM is short, `CONFIG_VESPER_WAKE=n`
+  removes everything (`>wake=off` only stops detection; WakeNet's memory stays allocated).
+- **Logs.** Detections, onsets, lengths, levels, timings and counts only. No audio, no
+  transcript. The caption shows the live transcript as for a press, but it is never logged.
+  `check_log_hygiene.py` scans `vesper_wake*.c|h` and patch `0007`, like all of `hatch/` and
+  `sdk-patches/`.
+- **Host checks.** `make -C firmware test` runs `test_vesper_wake` under ASan/UBSan. It covers
+  the config, the silent/click/noise/NaN listens with zero backend calls, the turn timeline
+  (lead-in, contiguity, end on silence, the pause tolerance, the 15 s cap, the onset on the
+  last allowed chunk), the floor tracker, re-blocking 320-sample chunks into 512/480/320/160/1/1024,
+  the threshold and on/off parsers, and the 20,000-round fuzz.
+
+### On-device check (task 20: the wake word, human gate)
+
+Not done by the agent: the board is OTA-only from here, and flashing or publishing is the
+orchestrator's. Steps:
+
+1. **Deliver 1.0.3.** `vesper-node firmware publish <SDK>/esp32/build-muse-aipi/muse-gadget.bin`
+   (OTA, see *Firmware updates*); then `>ota.check` or a reboot. No USB flash and no partition
+   change are needed: the model is inside the image.
+2. **Boot log** (serial monitor): `vesper_wake: wake word on: wn9_computer_tts ("Computer"),
+   N-sample chunks ...` (expect 512, 32 ms), then `detect ... us avg / ... us max at boot` and the
+   `wake word memory: ...` line. Record the numbers here, and check the `ready: free heap ...
+   internal` line. `>status` shows `"wake":{"state":"on",...}`.
+3. **Say "Computer"**, pause, then ask something: the face goes to LISTENING at once, the
+   transcript appears, Vesper replies. The log shows `wake word heard`, `wake: speech after
+   ...s` and `wake: recorded ...s (silence)`.
+4. **Say "Computer" and nothing else:** LISTENING for 5 s, then idle with no chirp. The log
+   shows `wake: no speech; back to idle (nothing sent)`, and the backend log shows no `/turn`
+   for it.
+5. **Push to talk still works:** a normal press turn, and a press during a wake listen (the
+   press takes over).
+6. **False-trigger soak:** leave it idle in a normal room (TV or talk) for a few hours, then
+   read `>wake` (`wakes`, `turns`, `no_speech`). If false wakes are a nuisance, try
+   `>wake.threshold=0.70`. If "Computer" is missed, try 0.60.
+7. **No secrets or transcripts on serial:** `grep -cE 'v(nc|cs)_' <monitor log>` prints `0`.
 
 ## Decision: the avatar is a patch set tracked in THIS repo (not an SDK fork)
 
