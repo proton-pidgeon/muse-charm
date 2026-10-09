@@ -112,7 +112,7 @@ diff --git a/esp32/components/muse/Kconfig b/esp32/components/muse/Kconfig
  
      config VESPER_WAKE_THRESHOLD
          int "Wake detection threshold (permille)"
-@@ -163,11 +157,33 @@
+@@ -163,11 +157,35 @@
          range 500 990
          default 650
          help
@@ -143,11 +143,13 @@ diff --git a/esp32/components/muse/Kconfig b/esp32/components/muse/Kconfig
 +        int "Wake word tensor arena (bytes)"
 +        depends on VESPER_WAKE
 +        range 16384 131072
-+        default 32768
++        default 40960
 +        help
 +            TensorFlow Lite Micro's working memory for the model, allocated
 +            once at boot in PSRAM. The boot log and >wake report how much of
-+            it the model uses ("arena").
++            it the model uses ("arena"): 24,608 B on the host with reference
++            kernels; the S3's esp-nn kernels add conv scratch (up to ~7.9 KB),
++            so 40960 leaves room.
  
      config VESPER_WAKE_DEFAULT_ON
          bool "Wake word on by default"

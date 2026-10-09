@@ -11,13 +11,13 @@ USB flashing (below) is only a fallback.
 ## The binary: firmware 1.0.4 ("Hey Vesper" wake word, task 22)
 - Built from a fresh `b1a3822` tree with `firmware/apply-sdk.sh` (patches 0001-0008) and
   `tools/muse/board.sh build aipi`, using ESP-IDF v6.0.1.
-- Build dir: `/Users/k3v/builds/muse-charm/scratch/sdk-impl-22-r2/esp32/build-muse-aipi/`
+- Build dir: `/Users/k3v/builds/muse-charm/scratch/sdk-impl-22-r3/esp32/build-muse-aipi/`
 - Durable copy, which survives that tree being rebuilt:
   `/Users/k3v/builds/muse-charm/scratch/firmware-1.0.4/`. It holds `muse-gadget.bin`,
   `app-flash_args`, `flash_args` and `muse-gadget.bin.sha256`.
 - `muse-gadget.bin` is 2,297,856 bytes (`0x231000`; 45% of the 4 MiB app slot stays free). Its
   version string is `1.0.4`, project `muse-gadget`, chip ESP32-S3, and its sha256 is
-  `0488f3b68bd996502667425a2af390a8dfcaddfbbe83576f723e4d3ed72f7de0`.
+  `c2f976258dc2478fb1bfa5b2afb8f654cededfabeffd04902d5a152ff1d0a682`.
 - It contains the 60,840-byte "Hey Vesper" microWakeWord model. 1.0.3's "Computer" WakeNet
   is gone: 1.0.3 crash-looped on the board, and 1.0.3 was never published. See
   `firmware/README.md`, *Wake word*, *Memory budget and the 1.0.3 crash*.
@@ -39,7 +39,7 @@ uv run --locked vesper-node firmware status
   version. The published version is 1.0.2, so no `--force` is needed. The image goes into the
   backend's firmware store (`~/.config/vesper-voice/firmware/` unless `node.env` sets another),
   and the running `com.vesper.node` service serves it. It prints
-  `published: version 1.0.4, 2297856 bytes, sha256 0488f3b6...`.
+  `published: version 1.0.4, 2297856 bytes, sha256 c2f97625...`.
 - **Watch the rollout:** the backend log shows the board's check and download
   (`firmware check: node=... running=1.0.2 published=1.0.4`, then the image request). After the
   reboot, `running=1.0.4` appears. To make the board check now, type `>ota.check` on its serial
@@ -92,7 +92,7 @@ Replace XXXX with the actual port suffix. `app-flash_args` writes `0x20000 muse-
 write to `ota_0` is then ignored on boot. If the boot log's version doesn't change, also reset
 the OTA selection back to `ota_0`. This doesn't touch NVS; it does clear the rollback history:
 ```sh
-python -m esptool --chip esp32s3 -p /dev/cu.usbmodemXXXX -b 460800 --before default-reset --after hard-reset write-flash 0x1d000 /Users/k3v/builds/muse-charm/scratch/sdk-impl-22-r2/esp32/build-muse-aipi/ota_data_initial.bin 0x20000 /Users/k3v/builds/muse-charm/scratch/firmware-1.0.4/muse-gadget.bin
+python -m esptool --chip esp32s3 -p /dev/cu.usbmodemXXXX -b 460800 --before default-reset --after hard-reset write-flash 0x1d000 /Users/k3v/builds/muse-charm/scratch/sdk-impl-22-r3/esp32/build-muse-aipi/ota_data_initial.bin 0x20000 /Users/k3v/builds/muse-charm/scratch/firmware-1.0.4/muse-gadget.bin
 ```
 A USB-flashed image never boots as `PENDING_VERIFY`, so **the bootloader won't roll it back**.
 That is why 1.0.3, flashed by USB, boot-looped instead of reverting. Prefer OTA (A) for any
@@ -111,7 +111,8 @@ The firmware's update check only works over HTTPS. With the Peggy URL, the boot-
 - The board boots and shows the Iconic face.
 - `>status` on serial shows version 1.0.4 and `"wake":{"state":"on","model":"hey_vesper",...}`.
 - The boot log has `vesper_wake: wake word on: "Hey Vesper" ...` and a `wake word memory: ...`
-  line. Note the inference time, the arena and the free internal heap figures
+  line. Note the inference time, the arena (`arena X of 40960 B`: the real S3 figure, as the
+  host's 24,608 B uses reference kernels without esp-nn's conv scratch) and the free internal heap figures
   (`firmware/README.md`, *On-device check (task 22)*, step 2).
 - Push to talk still works, with a voice reply.
 - Say "Hey Vesper", pause, ask something: the board goes to the listening state, then replies.

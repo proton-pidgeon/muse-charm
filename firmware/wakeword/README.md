@@ -59,7 +59,7 @@ and 10 minutes of AudioSet eval shard 06 as one stream:
 | Detections | **identical**: 299 / 300 positives and 0 / 300 general speech on both sides; 0 = 0 in the 10 min stream |
 | uint8 outputs vs LiteRT's reference kernels | 51,726 of 51,732 identical (max difference 7 of 255); stream 19,999 of 19,999 |
 | uint8 outputs vs `eval.py`'s XNNPACK run | 50,812 of 51,732 identical (max difference 8); stream 19,855 of 19,999 (max 2) |
-| Tensor arena used | 24,608 B on the 64-bit host (the board's figure, smaller with 32-bit pointers, is in its boot log) |
+| Tensor arena used | 24,608 B on the host with reference kernels; the S3 adds esp-nn conv scratch (≤ ~7.9 KB), so the boot log's `arena X of 40960 B` is the real number |
 
 The few output differences are integer rounding inside the kernels (TFLite Micro, LiteRT's
 reference and XNNPACK each round some intermediate steps differently); none changed a verdict.

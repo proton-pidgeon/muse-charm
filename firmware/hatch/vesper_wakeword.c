@@ -117,7 +117,7 @@ bool vesper_wakeword_init(void)
     /* The arena in PSRAM only, as ESPHome's micro_wake_word does: internal RAM is what Wi-Fi,
      * TLS, BLE and the display share, and 1.0.3 died of an internal-RAM wake engine (firmware/
      * README.md, "Memory budget and the 1.0.3 crash"). No PSRAM for it: no wake word, never a
-     * 32 KB bite out of internal RAM. */
+     * 40 KB bite out of internal RAM. */
     s_arena = heap_caps_aligned_alloc(16, CONFIG_VESPER_WAKE_ARENA, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_arena) {
         s_state = ST_FAILED;

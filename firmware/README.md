@@ -917,7 +917,7 @@ unchanged and works alongside it.
   | internal DIRAM, static | 172,913 | 191,133 | **173,105** (+192 over 1.0.2) | ~191,300 |
   | external RAM `.bss` | 62,696 | 62,696 | 66,904 (+4,208: the engine's state) | |
   | run-time internal RAM | 0 | ~16 KB (WakeNet's own allocations) | 1,424 B (three small frontend tables; arena, frontend buffers and engine state are in PSRAM; itemised below) | ~17.5 KB |
-  | run-time PSRAM | 0 | ~324 KB (Espressif's table) | 32 KB arena (24,608 B used on the 64-bit host) + 9,948 B frontend (9,620 kept, 328 freed at init) | ~366 KB |
+  | run-time PSRAM | 0 | ~324 KB (Espressif's table) | 40 KB arena (24,608 B on the host with reference kernels; the S3 adds esp-nn conv scratch (≤ ~7.9 KB), so the boot log's `arena X of 40960 B` is the real number) + 9,948 B frontend (9,620 kept, 328 freed at init) | ~366 KB |
   | CPU on core 1 | 0 | ~3 ms per 32 ms chunk (Espressif), up to ~9% | ~24,800 MACs per 30 ms inference (counted from the model's layers) = 0.83 M MAC/s: 3.5% of a 240 MHz core even at a pessimistic 10 cycles per MAC, plus the frontend's 512-point FFT every 10 ms; not yet measured on the board | sum |
   | false wakes per hour | 0 | not measured (Espressif's in-house figure only) | 0.31 / h on the fresh holdout | the two rates added |
 
@@ -970,7 +970,7 @@ unchanged and works alongside it.
   `esphome/esp-micro-speech-features` 1.2.3 only when `MUSE_BOARD_ID == "aipi"`; the frontend
   is built with `USE_ESP32` (as ESPHome does) so its buffers go to PSRAM. `CONFIG_VESPER_WAKE`
   (default y) depends on the AIPI, `MUSE_HATCH` and PSRAM. `CONFIG_VESPER_WAKE_THRESHOLD` (650),
-  `_WINDOW` (3), `_ARENA` (32768 B) and `_DEFAULT_ON` (y).
+  `_WINDOW` (3), `_ARENA` (40960 B; 24,608 B on the host with reference kernels; the S3 adds esp-nn conv scratch (≤ ~7.9 KB), so the boot log's `arena X of 40960 B` is the real number) and `_DEFAULT_ON` (y).
 - **Sensitivity.** The threshold defaults to **0.65** (`CONFIG_VESPER_WAKE_THRESHOLD=650`),
   the operating point task 21 chose on validation data alone, at window 3. On the held-out test
   it gave 2.93% missed and 0.22 false wakes per hour, and 0.31 per hour on the fresh 19 h
@@ -1064,15 +1064,18 @@ Confidence that the root cause is identified: **low**. Confidence that 1.0.4 doe
 - There are no prebuilt libraries in the wake path. TFLite Micro, esp-nn and the microfrontend
   are compiled from source with this toolchain and picolibc headers. The only prebuilt archive
   linked is `libesp_new_jpeg.a`, which 1.0.2 also links.
-- Every run-time allocation is NULL-checked, and every failure turns the wake word off with one
-  `wake word off: ...` log line. Push to talk keeps working and nothing crashes.
-- Large buffers are in PSRAM only. The 32 KB arena has **no internal-RAM fallback** (1.0.4's
+- Every run-time allocation is NULL-checked. An arena shortfall at the memory planner turns the
+  wake word off (one `wake word off: ...` log line; push to talk keeps working). A
+  persistent-buffer shortfall or a TFLM DCHECK (no NDEBUG on device) aborts at init, before OTA
+  validation, and the bootloader rolls back.
+- Large buffers are in PSRAM only. The 40 KB arena has **no internal-RAM fallback** (1.0.4's
   first cut fell back to internal RAM; removed). No PSRAM means no wake word.
-- The engine's call depth was measured: init, 50 feeds and a reset need **2,168 B of stack**
-  (host, painted-stack probe). The boot log prints the boot task's unused stack after init.
+- The engine's call depth was measured on the host: init, 50 feeds and a reset need **2,168 B of
+  stack** (host, painted-stack probe). The measurement of record is the boot log's `wake word
+  memory: ... init stack N B unused`.
 
 **1.0.4 static memory** (`esp_idf_size` on `muse-gadget.map`, fresh `b1a3822` tree,
-`scratch/sdk-impl-22-r2`):
+`scratch/sdk-impl-22-r3`):
 
 | | 1.0.2 | 1.0.3 | 1.0.4 |
 |---|---|---|---|
@@ -1086,7 +1089,7 @@ interpreter in the same arena and static memory.
 
 | allocation | bytes | caps / placement | if it fails |
 |---|---|---|---|
-| TFLM tensor arena | 32,768 (24,608 used, host) | `heap_caps_aligned_alloc(16, ..., MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT)`: PSRAM only | `wake word off: no PSRAM for a 32768 B tensor arena` |
+| TFLM tensor arena | 40,960 (24,608 B on the host with reference kernels; the S3 adds esp-nn conv scratch (≤ ~7.9 KB), so the boot log's `arena X of 40960 B` is the real number) | `heap_caps_aligned_alloc(16, ..., MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT)`: PSRAM only | `wake word off: no PSRAM for a 40960 B tensor arena` |
 | frontend window coefficients, input, output | 3 × 960 | `MALLOC_CAP_SPIRAM \| 8BIT` first (built with `USE_ESP32`), `malloc` fallback | `FrontendPopulateState()` returns 0, then `wake word off: the audio frontend didn't start (memory)` |
 | FFT input, output, kissfft scratch | 1,024 + 2,056 + 2,836 | same | same |
 | filterbank channel starts, weight starts, widths, work | 82 + 82 + 82 + 328 | same | same (upstream checks every one except `work`; it can only be NULL if PSRAM *and* internal RAM both fail) |
@@ -1097,19 +1100,19 @@ interpreter in the same arena and static memory.
 | engine state: resolver 480, interpreter 212, resource-variable arena 2,048, quantiser table 1,024, frontend state 136, stacker 124, last input 120, detector 44 | 4,188 static | `EXT_RAM_BSS_ATTR`: PSRAM `.bss` | static, can't fail |
 | the model | 60,840 | `.rodata` (`vesper_hv_model.S`), mapped into PSRAM (`SPIRAM_RODATA`) | `wake word off: no model in this image` |
 | voice task stack | 12,288 (1.0.2: 6,144) | `MUSE_BIG_CAPS`: PSRAM, as in 1.0.2 | `muse_voice_start()` returns `ESP_ERR_NO_MEM`, the 1.0.2 path |
-| init stack | 2,168 used (host) | the existing muse_boot task (8,192 B, internal); nothing new is allocated | the boot log prints what's left |
+| init stack | host: 2,168 used (measurement of record: the boot log's `init stack N B unused`) | the existing muse_boot task (8,192 B, internal); nothing new is allocated | the boot log prints what's left |
 
 So the wake word costs **1,424 B of internal heap** (plus three heap block headers) and
 **+192 B of static internal RAM** over 1.0.2: about **1.7 KB** in total. In PSRAM it costs
-32,768 + 9,620 + 4,188 + 6,144 (the larger voice stack) = about 52 KB, out of about 5.4 MB free.
+40,960 + 9,620 + 4,188 + 6,144 (the larger voice stack) = about 60 KB, out of about 5.4 MB free.
 
 **Headroom.** The ESP32-S3 has 512 KB of SRAM. After the 32 KB instruction cache, the 64 KB data
 cache and the ROM's reservations, the linker gives this app 341,760 B of DIRAM. 1.0.4's static
 use leaves 168,655 B to become the internal heap.
 
 - **At idle:** about 119 KB was free on the board with Wi-Fi up (above). 1.0.4 takes 1.7 KB of
-  that, about 1.4%, so expect about 117 KB free. The boot log now prints the real figure: the
-  free internal heap, its largest block and its low-water mark after wake init.
+  that, about 1.4%, so, extrapolated, about 117 KB free. The measurement of record is the boot log's
+  `wake word memory: ... free now N B internal (largest ..., lowest since boot ...)` line.
 - **During a turn** (Wi-Fi, HTTPS to Peggy, MP3 decode, avatar, audio): the big consumers are
   configured into PSRAM. `CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y` puts the 16 KB in and out TLS
   buffers there, and `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` puts Wi-Fi and lwIP buffers there
@@ -1170,7 +1173,7 @@ Steps:
    `rolled back here before: 1.0.4`.
 2. **Boot log** (serial monitor): `vesper_wake: wake word on: "Hey Vesper" (microWakeWord,
    60840 B model), threshold 0.650, window 3; 20 ms chunk with an inference: N us avg / M us max
-   at boot`, then `wake word memory: arena X of 32768 B used (PSRAM); the engine took ... B
+   at boot`, then `wake word memory: arena X of 40960 B used (PSRAM); the engine took ... B
    internal, ... B PSRAM; free now ... B internal (largest ..., lowest since boot ...), ... B
    PSRAM; init stack ... B unused`. Record the numbers here (they replace the CPU bound, the
    host arena figure and the 1,424 B internal estimate above). Also note the 5 s heartbeat's
