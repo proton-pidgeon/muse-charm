@@ -15,6 +15,7 @@ them, it fails. We don't move the bar.
 B1 and B2 are both measured at **one** operating point: the `probability_cutoff` and
 `sliding_window_size` the firmware will ship. That point is chosen on the **validation** split
 only (rule below). It is never tuned on the test split.
+(Caveat, added 2026-10-09: the original test background was scored in all 26 runs, so it is development-consumed; see the honesty notes in `README.md` and addendum #3, which scores a fresh holdout once.)
 
 ## What gets evaluated
 
@@ -58,6 +59,8 @@ Detection is scored on the whole clip (any detection = accept).
   noise p = 1, SNR [0, 5] dB).
 
 ### Background for B2 (FA/h): never trained on, never used for tuning
+
+(Caveat, added 2026-10-09: "never used for tuning" holds for training and for the operating-point rule, but these test numbers were visible for every one of the 26 runs, so this background is development-consumed. Addendum #3 below adds a fresh confirmatory holdout.)
 
 | Source | What it is | Duration |
 |---|---|---|
@@ -141,6 +144,26 @@ mined negatives existed, so no test number of a new run informed it.
    on test, the task fails, exactly as before.
 
 The 19 old runs' validation numbers under the old rule stay in the README as history.
+
+### Addendum #3: confirmatory fresh holdout (2026-10-09, committed before the data was downloaded or scored)
+
+The adjudicator noted that the test background (DipCo + AudioSet eval shards 00-05) was looked at
+in 26 runs. This addendum scores the final model once on audio no run has ever touched. It
+changes no bar and no earlier number.
+
+1. **Model and point.** The committed `firmware/wakeword/hey-vesper.tflite` (sha256
+   `40b3510d094de7fd2a8848faad09573915ad86b291381317403b09e419b6340d`), at the frozen point
+   cutoff 0.65 / window 3 (`eval.py --fixed-cutoff 0.65 --fixed-window 3`).
+2. **Data.** AudioSet *evaluation* parquet shards 16-29 (HF `agkphysics/AudioSet`, `data/eval`),
+   each concatenated into a continuous track and run through the same feature pipeline as the
+   test background (`background_confirm` in `download_data.py`; `eval.py --confirm-only`). Shards
+   16-29 are used by no training, validation or test run (the used evaluation shards are 00-15
+   and 30-31). Scored exactly once. If fewer than 14 shards fit on disk, the shards from 16
+   upward that were scored are stated.
+3. **No new positives.** FRR stays as reported on the existing test set.
+4. **Pass criterion.** Total FA/h **< 1.0** over the fresh hours. The result is reported whichever
+   way it goes, with per-shard counts and a Poisson 95 % upper bound. No retraining, re-tuning
+   or cutoff change in response to it.
 
 ## Also reported (no bar)
 
