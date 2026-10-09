@@ -10,9 +10,9 @@
 #      that already has the whole series is detected as such)
 #   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
 #      the protocol core, the reply-speech helpers, the claim flow, the node
-#      credential store, the BLE host, the update check and the announcement
-#      poll; and VERSION, the firmware version the build stamps into the
-#      image) into
+#      credential store, the BLE host, the update check, the announcement
+#      poll and the wake word; and VERSION, the firmware version the build
+#      stamps into the image) into
 #      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
@@ -89,7 +89,8 @@ dest="$sdk/esp32/components/muse/vesper"
 mkdir -p "$dest"
 for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h \
          vesper_claim.c vesper_claim.h vesper_cred.c vesper_cred.h vesper_ble.c vesper_ble.h \
-         vesper_ota.c vesper_ota.h vesper_announce.c vesper_announce.h VERSION; do
+         vesper_ota.c vesper_ota.h vesper_announce.c vesper_announce.h \
+         vesper_wake.c vesper_wake.h vesper_wakenet.c vesper_wakenet.h VERSION; do
     if ! cmp -s "$here/hatch/$f" "$dest/$f"; then
         cp "$here/hatch/$f" "$dest/$f"
         echo "installed: components/muse/vesper/$f"

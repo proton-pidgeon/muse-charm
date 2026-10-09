@@ -1,0 +1,511 @@
+diff --git a/esp32/components/muse/CMakeLists.txt b/esp32/components/muse/CMakeLists.txt
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -69,6 +69,41 @@
+     list(APPEND srcs "vesper/vesper_ota.c")
+     # Vesper (task 18): the idle announcement poll's core (timers, reminders).
+     list(APPEND srcs "vesper/vesper_announce.c")
++    # Vesper (task 20): the wake word. vesper_wake.c is the pure-C core
++    # (host-tested), vesper_wakenet.c runs ESP-SR WakeNet on the idle mic
++    # feed. The one model (CONFIG_VESPER_WAKE_MODEL) is packed with esp-sr's
++    # own pack_model.py and linked into the app's rodata, 16-byte aligned, so
++    # an OTA update carries it: no model partition, no USB flash.
++    if(CONFIG_VESPER_WAKE AND NOT CMAKE_BUILD_EARLY_EXPANSION)
++        list(APPEND srcs "vesper/vesper_wake.c" "vesper/vesper_wakenet.c")
++        idf_component_get_property(sr_dir espressif__esp-sr COMPONENT_DIR)
++        set(wake_model "${sr_dir}/model/wakenet_model/${CONFIG_VESPER_WAKE_MODEL}")
++        if(NOT sr_dir OR NOT EXISTS "${wake_model}/_MODEL_INFO_")
++            message(FATAL_ERROR "Wake word: no esp-sr model ${CONFIG_VESPER_WAKE_MODEL} (${wake_model})")
++        endif()
++        set(wake_stage "${CMAKE_CURRENT_BINARY_DIR}/vesper_srmodels")
++        file(REMOVE_RECURSE "${wake_stage}")
++        file(COPY "${wake_model}" DESTINATION "${wake_stage}")
++        idf_build_get_property(python PYTHON)
++        execute_process(COMMAND "${python}" "${sr_dir}/model/pack_model.py" -m "${wake_stage}" -o srmodels.bin
++                        RESULT_VARIABLE pack_rc)
++        if(NOT pack_rc EQUAL 0 OR NOT EXISTS "${wake_stage}/srmodels.bin")
++            message(FATAL_ERROR "Wake word: packing ${CONFIG_VESPER_WAKE_MODEL} failed")
++        endif()
++        file(SIZE "${wake_stage}/srmodels.bin" wake_bytes)
++        message(STATUS "Wake word: ${CONFIG_VESPER_WAKE_MODEL} packed into the image (${wake_bytes} bytes)")
++        set(wake_asm "${CMAKE_CURRENT_BINARY_DIR}/vesper_srmodels.S")
++        file(WRITE "${wake_asm}"
++            ".section .rodata.vesper_srmodels\n"
++            ".balign 16\n"
++            ".global vesper_srmodels_start\n"
++            "vesper_srmodels_start:\n"
++            ".incbin \"${wake_stage}/srmodels.bin\"\n"
++            ".global vesper_srmodels_end\n"
++            "vesper_srmodels_end:\n")
++        set_source_files_properties("${wake_asm}" PROPERTIES OBJECT_DEPENDS "${wake_stage}/srmodels.bin")
++        list(APPEND srcs "${wake_asm}")
++    endif()
+     if(CONFIG_MUSE_BOARD_WAVESHARE_S3_175C OR CONFIG_MUSE_BOARD_WAVESHARE_S3_175)
+         # One driver: the 1.75 differs only in pins (its BSP's) and its PWR key.
+         list(APPEND srcs "boards/board_waveshare_s3_175c.c" "boards/muse_lcd_bands.c")
+diff --git a/esp32/components/muse/Kconfig b/esp32/components/muse/Kconfig
+--- a/esp32/components/muse/Kconfig
++++ b/esp32/components/muse/Kconfig
+@@ -136,4 +136,45 @@
+             plain text. Provision the token on the device instead: serial
+             console ">hatch.token=<token>" (never echoed).
+ 
++    config VESPER_WAKE
++        bool "Wake word (ESP-SR WakeNet, on the device only)"
++        depends on MUSE_HATCH && MUSE_BOARD_AIPI && SPIRAM
++        default y
++        help
++            Vesper (task 20): saying the wake word starts a turn as a talk
++            press does. WakeNet runs on the idle mic feed only, on the
++            device; no audio leaves it before the wake word, and nothing
++            reaches the backend until speech follows (see muse-charm
++            firmware/README.md, "Wake word"). The model is packed into the
++            app image, so an OTA update delivers it. Needs the espressif/esp-sr
++            component (components/muse/idf_component.yml, AIPI only).
++
++    config VESPER_WAKE_MODEL
++        string "WakeNet model"
++        depends on VESPER_WAKE
++        default "wn9_computer_tts"
++        help
++            The esp-sr model directory (model/wakenet_model/<name>) packed
++            into the image. wn9_computer_tts says "Computer".
++
++    config VESPER_WAKE_THRESHOLD
++        int "Wake detection threshold (permille)"
++        depends on VESPER_WAKE
++        range 500 990
++        default 650
++        help
++            WakeNet's detection threshold, in thousandths: higher means
++            fewer false wakes and more missed ones. 650 is Espressif's own
++            tuning for wn9_computer_tts (0.648/0.650). Adjustable on the
++            device without a rebuild: serial ">wake.threshold=0.70" (kept
++            in NVS muse:wake_thr).
++
++    config VESPER_WAKE_DEFAULT_ON
++        bool "Wake word on by default"
++        depends on VESPER_WAKE
++        default y
++        help
++            The wake word's state until NVS muse:wake_on says otherwise
++            (serial ">wake=on" / ">wake=off").
++
+ endmenu
+diff --git a/esp32/components/muse/idf_component.yml b/esp32/components/muse/idf_component.yml
+--- a/esp32/components/muse/idf_component.yml
++++ b/esp32/components/muse/idf_component.yml
+@@ -26,6 +26,12 @@
+     public: true
+     rules:
+       - if: "$CONFIG{MUSE_BOARD_ID} != \"none\""
++  # Vesper (task 20): WakeNet for the wake word, on the AIPI only. Only the
++  # one model named by CONFIG_VESPER_WAKE_MODEL is packed into the image.
++  espressif/esp-sr:
++    version: "2.5.5"
++    rules:
++      - if: "$CONFIG{MUSE_BOARD_ID} == \"aipi\""
+   espressif/esp_lvgl_adapter:
+     version: "0.6.4"
+     rules:
+diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_input.c
+--- a/esp32/components/muse/muse_input.c
++++ b/esp32/components/muse/muse_input.c
+@@ -43,6 +43,10 @@
+ #include "muse_state.h"
+ #include "muse_ui.h"
+ #include "muse_voice.h"
++#if CONFIG_VESPER_WAKE
++#include "vesper_wake.h"
++#include "vesper_wakenet.h"
++#endif
+ #include "muse_wifi.h"
+ #if CONFIG_MUSE_WATCHER_CAMERA
+ #include "boards/watcher_camera.h"
+@@ -562,6 +566,49 @@
+         }
+     }
+     printf("@face.error unknown face \"%s\": boot idle listening thinking speaking error off happy\n", name);
++    fflush(stdout);
++}
++
++/*
++ * Vesper (task 20): ">wake" shows the wake word's state, ">wake=on|off"
++ * switches it, ">wake.threshold=0.65" sets WakeNet's detection threshold
++ * (0.50-0.99; out-of-range values are clamped, anything else refused). Both
++ * are kept in NVS (muse:wake_on, muse:wake_thr) and apply from the next
++ * WakeNet chunk, no restart.
++ */
++static void wake_command(const char *line)
++{
++#if CONFIG_VESPER_WAKE
++    char json[320];
++    if (!strcmp(line, "wake")) {
++        vesper_wakenet_status_json(json, sizeof(json));
++        printf("@wake %s\n", json);
++    } else if (!strncmp(line, "wake=", 5)) {
++        bool on;
++        if (!vw_parse_onoff(line + 5, &on)) {
++            printf("@wake.error expected >wake=on or >wake=off\n");
++        } else {
++            bool saved = vesper_wakenet_set_on(on);
++            printf("@wake %s%s\n", on ? "on" : "off", saved ? "" : " (not saved: NVS write failed)");
++        }
++    } else if (!strncmp(line, "wake.threshold=", 15)) {
++        int permille;
++        vw_parse_t r = vw_parse_threshold(line + 15, &permille);
++        if (r == VW_PARSE_INVALID) {
++            printf("@wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now %.3f)\n",
++                   vesper_wakenet_threshold() / 1000.0);
++        } else {
++            bool saved = vesper_wakenet_set_threshold(permille);
++            printf("@wake.threshold %.3f%s%s\n", permille / 1000.0, r == VW_PARSE_CLAMPED ? " (clamped to 0.50-0.99)" : "",
++                   saved ? "" : " (not saved: NVS write failed)");
++        }
++    } else {
++        printf("@wake.error unknown: >wake, >wake=on|off, >wake.threshold=<0.50-0.99>\n");
++    }
++#else
++    (void)line;
++    printf("@wake.error this build has no wake word\n");
++#endif
+     fflush(stdout);
+ }
+ 
+@@ -579,8 +626,16 @@
+             char vesper[256];
+             vesper_node_status_json(vesper, sizeof(vesper));
+             muse_ble_status_json(json, cap);
++#if CONFIG_VESPER_WAKE
++            /* Task 20: the wake word's state, settings and counts (never audio). */
++            char wake[320];
++            vesper_wakenet_status_json(wake, sizeof(wake));
++            printf("@status {\"board\":\"%s\",\"chat\":%s,\"vesper\":%s,\"wake\":%s,\"device\":%s}\n",
++                   muse_board->name, CHAT_OVER_SERIAL, vesper, wake, json);
++#else
+             printf("@status {\"board\":\"%s\",\"chat\":%s,\"vesper\":%s,\"device\":%s}\n", muse_board->name,
+                    CHAT_OVER_SERIAL, vesper, json);
++#endif
+             fflush(stdout);
+             free(json);
+         }
+@@ -598,6 +653,10 @@
+         fflush(stdout);
+         return true;
+     }
++    if (!strcmp(line, "wake") || !strncmp(line, "wake=", 5) || !strncmp(line, "wake.", 5)) {
++        wake_command(line);   /* task 20: the wake word's settings */
++        return true;
++    }
+     bool reset = !strcmp(line, "power.reset");
+     if (reset || !strcmp(line, "power")) {
+         if (reset) {
+@@ -659,7 +718,8 @@
+  * "power.reset" starts it over, "nap" sleeps and leaves Wi-Fi at once (as
+  * two minutes asleep on battery would; 'w' rejoins), "claim.forget" forgets
+  * the Vesper node credential so the node claims again, "ota.check" asks the
+- * Vesper node backend for new firmware now, "face=" shows a face
++ * Vesper node backend for new firmware now, "wake", "wake=on|off" and
++ * "wake.threshold=" show and set the wake word (see wake_command), "face=" shows a face
+  * (see set_face), and "chat=" sends a typed message to Hatch (see chat_line
+  * and tools/muse/chat.py).
+  */
+diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voice.c
+--- a/esp32/components/muse/muse_voice.c
++++ b/esp32/components/muse/muse_voice.c
+@@ -37,6 +37,11 @@
+ #include "muse_settings.h"
+ #include "muse_state.h"
+ #include "muse_wifi.h"
++#if CONFIG_VESPER_WAKE
++#include "muse_chat_vesper.h"
++#include "vesper_wake.h"
++#include "vesper_wakenet.h"
++#endif
+ 
+ static const char *TAG = "muse_voice";
+ 
+@@ -96,7 +101,19 @@
+ static int16_t s_chunk[MUSE_AUDIO_CHUNK];
+ static int s_settle;
+ 
++#if CONFIG_VESPER_WAKE
+ /*
++ * Vesper (task 20): the wake word. idle_capture() hands each clean idle chunk
++ * to WakeNet (vesper_wakenet.c) and sets s_woke when it hears the word; the
++ * loop then runs wake_turn(). Nothing else feeds WakeNet, so it can't fire
++ * during a turn, a reply, Muse's own playback tail (s_settle) or an
++ * announcement (s_wake_quiet).
++ */
++static bool s_woke;
++static int s_wake_quiet;   /* chunks still skipped after an announcement */
++#endif
++
++/*
+  * The note being recorded (HOLD_NOTES), kept whole in case it can't go now.
+  * Streaming, Hatch has had s_sent frames of it.
+  */
+@@ -137,8 +154,33 @@
+ {
+     s_pre_fill = 0;
+     s_settle = SETTLE_CHUNKS;
++#if CONFIG_VESPER_WAKE
++    s_woke = false;
++    vesper_wakenet_reset();   /* nothing heard before this counts toward a wake */
++#endif
+ }
+ 
++#if CONFIG_VESPER_WAKE
++/* One clean idle chunk for the wake word: not while an announcement is said, nor its tail. */
++static void wake_listen_idle(const int16_t *pcm)
++{
++    if (vesper_node_announcing()) {
++        if (!s_wake_quiet) {
++            vesper_wakenet_reset();
++        }
++        s_wake_quiet = SETTLE_CHUNKS;
++        return;
++    }
++    if (s_wake_quiet > 0) {
++        s_wake_quiet--;
++        return;
++    }
++    if (vesper_wakenet_feed(pcm, MUSE_AUDIO_CHUNK, muse_audio_dbfs(pcm, MUSE_AUDIO_CHUNK))) {
++        s_woke = true;
++    }
++}
++#endif
++
+ /* One 20 ms idle read: feeds the pre-roll ring and the settings mic meter. */
+ static void idle_capture(void)
+ {
+@@ -154,6 +196,9 @@
+         s_settle--;
+         return;
+     }
++#if CONFIG_VESPER_WAKE
++    wake_listen_idle(s_chunk);
++#endif
+     pre_chunk_t *c = &s_pre[s_pre_next];
+ #if MUSE_LOW_MEM
+     c->start = s_pre_enc;
+@@ -779,8 +824,162 @@
+         return false;
+     }
+     return true;
++}
++
++#if CONFIG_VESPER_WAKE
++#if !HOLD_NOTES
++#error "The wake word records locally before it may stream: it needs HOLD_NOTES (PSRAM)"
++#endif
++
++typedef enum {
++    WAKE_SPOKE,     /* speech followed the wake: the note is in s_rec (and maybe streaming) */
++    WAKE_QUIET,     /* nobody spoke: nothing was sent, nothing is kept */
++    WAKE_PRESSED,   /* the talk button was pressed: it's left queued for the loop */
++} wake_rec_t;
++
++/*
++ * The listen after a wake (vesper_wake.h). It looks like a press (LISTENING,
++ * a caption), but:
++ *  - nothing from before the wake word is used: the pre-roll ring is never
++ *    read here, the note starts at the detection;
++ *  - the note is recorded locally, and Hatch (the backend) is not contacted,
++ *    not even muse_hatch_turn_begin(), until the speech onset; then the note
++ *    goes from 300 ms before the onset (never before the detection), and the
++ *    rest streams as in record();
++ *  - it ends on 1 s of trailing silence or at MAX_SECS (there's no release);
++ *    with no speech within 5 s it ends with nothing sent.
++ */
++static wake_rec_t wake_record(void)
++{
++    muse_state_set_mode(MUSE_MODE_LISTENING);
++    muse_state_set_progress(0);
++    muse_state_set_caption("LISTENING...");
++    s_rec_n = s_sent = 0;
++    s_live = s_tried = false;
++    vw_config_t cfg;
++    vw_config_default(&cfg);
++    cfg.max_chunks = MAX_FRAMES / MUSE_AUDIO_CHUNK;
++    vw_listen_t l;
++    vw_listen_start(&l, &cfg, vesper_wakenet_floor_db());
++    rec_stats_t st = { 0 };
++    bool heard = false, gave_up = false;
++    char text[96];
++    vw_verdict_t v = VW_WAITING;
++    while (v != VW_END_SILENCE && v != VW_END_MAX) {
++        if (press_waiting()) {
++            return WAKE_PRESSED;
++        }
++        if (s_rec_n + MUSE_AUDIO_CHUNK > MAX_FRAMES || muse_audio_read(s_chunk, MUSE_AUDIO_CHUNK) != ESP_OK) {
++            break;
++        }
++        muse_state_set_level(muse_audio_level(s_chunk, MUSE_AUDIO_CHUNK));
++        v = vw_listen_chunk(&l, muse_audio_dbfs(s_chunk, MUSE_AUDIO_CHUNK));
++        take(&st, s_chunk);   /* into s_rec; to Hatch only once live */
++        if (v == VW_NO_SPEECH) {
++            return WAKE_QUIET;
++        }
++        if (!vw_listen_may_contact_backend(&l)) {
++            continue;
++        }
++        if (v == VW_ONSET) {
++            /* The note starts shortly before the speech; what came before it (quiet since the
++             * wake) is dropped unsent. Then on to Hatch as a press would. */
++            size_t lead = (size_t)vw_listen_lead(&l) * MUSE_AUDIO_CHUNK;
++            lead = lead < s_rec_n ? lead : s_rec_n;
++            memmove(s_rec, s_rec + lead, (s_rec_n - lead) * sizeof(int16_t));
++            s_rec_n -= lead;
++            st = (rec_stats_t){ 0 };
++            for (size_t i = 0; i + MUSE_AUDIO_CHUNK <= s_rec_n; i += MUSE_AUDIO_CHUNK) {
++                keep(&st, s_rec + i, MUSE_AUDIO_CHUNK);
++            }
++            ESP_LOGI(TAG, "wake: speech after %.2fs", (double)l.chunks * MUSE_AUDIO_CHUNK / MUSE_AUDIO_RATE);
++            if (muse_hatch_ready() && !s_held_count) {
++                go_live();
++            }
++            muse_state_set_caption(s_live ? "LISTENING..." : "RECORDING...");
++        }
++        muse_hatch_ev_t ev;
++        while (s_live && (ev = muse_hatch_turn_event(text, sizeof(text))) != MUSE_HATCH_EV_NONE) {
++            if (ev == MUSE_HATCH_EV_HEARD && text[0]) {
++                heard = true;
++                muse_state_set_caption("%s", text);
++            } else if (ev == MUSE_HATCH_EV_ERROR) {
++                ESP_LOGW(TAG, "muse: %s", text);
++                muse_hatch_turn_cancel();
++                s_live = false;
++                gave_up = true;   /* the kept note goes later */
++            }
++        }
++        bool tick = l.chunks % 5 == 0;
++        if (tick && !s_live && !gave_up && !s_held_count && muse_hatch_ready()) {
++            ESP_LOGI(TAG, "Muse in reach: streaming the note so far");
++            go_live();
++        }
++        muse_state_set_progress((float)s_rec_n / MAX_FRAMES);
++        if (!heard && tick) {
++            muse_state_set_caption("%s %.1fs", s_live ? "LISTENING" : "RECORDING", (double)s_rec_n / MUSE_AUDIO_RATE);
++        }
++    }
++    muse_state_set_level(0);
++    if (!vw_listen_may_contact_backend(&l)) {
++        return WAKE_QUIET;   /* the mic failed before any speech: nothing was sent */
++    }
++    float rms_db = st.frames ? 10.0f * log10f((float)(st.acc / st.frames / (32768.0 * 32768.0)) + 1e-10f) : -100.0f;
++    ESP_LOGI(TAG, "wake: recorded %.2fs (%s): rms %.1f dBFS, peak %.1f dBFS, room floor %.1f dBFS",
++             (double)s_rec_n / MUSE_AUDIO_RATE, v == VW_END_MAX ? "max" : "silence", rms_db < -100.0f ? -100.0f : rms_db,
++             20.0 * log10((st.peak + 1) / 32768.0), (double)vesper_wakenet_floor_db());
++    return WAKE_SPOKE;
+ }
+ 
++/*
++ * The wake word was heard at idle: the same listening state and turn as a
++ * press (wake_record, then finish_note), or back to idle quietly. Returns
++ * true if a press interrupted the reply, as finish_note does.
++ */
++static bool wake_turn(void)
++{
++    if (muse_state_asleep()) {
++        muse_state_set_asleep(false);   /* show that it's listening */
++    } else {
++        muse_state_poke();
++    }
++    muse_wifi_power(MUSE_WIFI_FULL);
++    if (!can_record()) {
++        vesper_wakenet_count(VESPER_WAKE_NOT_READY);
++        pre_reset();
++        return false;
++    }
++    if (!s_rec) {
++        go_idle("NO MEMORY TO LISTEN");   /* a wake turn waits for speech in s_rec */
++        vesper_wakenet_count(VESPER_WAKE_NOT_READY);
++        pre_reset();
++        return false;
++    }
++    wake_rec_t r = wake_record();
++    if (r != WAKE_SPOKE) {
++        if (s_live) {
++            muse_hatch_turn_cancel();   /* only after an onset: a press took over */
++        }
++        drop_rec();
++        pre_reset();
++        go_idle("");
++        if (r == WAKE_QUIET) {
++            ESP_LOGI(TAG, "wake: no speech; back to idle (nothing sent)");
++        }
++        vesper_wakenet_count(r == WAKE_QUIET ? VESPER_WAKE_NO_SPEECH : VESPER_WAKE_PRESSED);
++        return false;
++    }
++    vesper_wakenet_count(VESPER_WAKE_TURN);
++    bool pending_down = finish_note();
++    pre_reset();
++    if (!pending_down && muse_state_mode(NULL) != MUSE_MODE_IDLE) {
++        muse_state_make_happy();
++        go_idle("");
++    }
++    return pending_down;
++}
++#endif
++
+ static void voice_task(void *arg)
+ {
+     bool pending_down = false;
+@@ -840,6 +1039,15 @@
+             }
+             /* The 20 ms read paces this loop. */
+             idle_capture();
++#if CONFIG_VESPER_WAKE
++            if (s_woke) {
++                s_woke = false;
++                if (!press_waiting()) {   /* a press at the same moment wins */
++                    pending_down = wake_turn();
++                    continue;
++                }
++            }
++#endif
+             if (xQueueReceive(s_queue, &ev, 0) != pdTRUE) {
+                 continue;
+             }
+@@ -852,6 +1060,9 @@
+         if (wake && !held_on_waking()) {
+             continue;   /* a tap: it only woke Muse */
+         }
++#if CONFIG_VESPER_WAKE
++        s_woke = false;   /* a press: the wake word's turn is this one */
++#endif
+         muse_wifi_power(MUSE_WIFI_FULL);
+         if (!can_record()) {
+             pending_down = false;
+@@ -891,8 +1102,15 @@
+         muse_state_set_caption("AUDIO INIT FAILED");
+         return ESP_FAIL;
+     }
++#if CONFIG_VESPER_WAKE
++    /* Here, on the caller's internal-RAM stack: it reads NVS. Without it, push to talk as before. */
++    vesper_wakenet_init();
++    const uint32_t stack = 12288;   /* WakeNet's detect runs on this task */
++#else
++    const uint32_t stack = 6144;
++#endif
+     /* Stack in PSRAM if there is any (this task never writes flash) to spare internal RAM for Wi-Fi/BLE. */
+-    if (xTaskCreatePinnedToCoreWithCaps(voice_task, "muse_voice", 6144, NULL, 6, NULL, MUSE_AUDIO_CORE,
++    if (xTaskCreatePinnedToCoreWithCaps(voice_task, "muse_voice", stack, NULL, 6, NULL, MUSE_AUDIO_CORE,
+                                         MUSE_BIG_CAPS) != pdPASS) {
+         return ESP_ERR_NO_MEM;
+     }
+diff --git a/esp32/devices/sdkconfig.muse-aipi b/esp32/devices/sdkconfig.muse-aipi
+--- a/esp32/devices/sdkconfig.muse-aipi
++++ b/esp32/devices/sdkconfig.muse-aipi
+@@ -64,3 +64,10 @@
+ # actually slept, and how long each power lock kept the chip awake.
+ CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y
+ CONFIG_PM_PROFILING=y
++
++# Vesper (task 20): the wake word (components/muse Kconfig VESPER_WAKE) uses
++# ESP-SR WakeNet with one model, wn9_computer_tts ("Computer"), packed into
++# the app image. Select only that one here; no MultiNet, no AFE models.
++CONFIG_SR_WN_WN9_COMPUTER_TTS=y
++CONFIG_SR_MN_CN_NONE=y
++CONFIG_SR_MN_EN_NONE=y

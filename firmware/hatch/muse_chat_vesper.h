@@ -53,6 +53,10 @@ bool vesper_node_forget_credential_now(void);
  * presence only, for >status. */
 int vesper_node_status_json(char *out, size_t cap);
 
+/* An announcement (task 18) is being said: the wake word (task 20) doesn't listen meanwhile, so
+ * Muse's own voice can't wake it. */
+bool vesper_node_announcing(void);
+
 /*
  * Firmware updates (task 13, F4): see vesper_ota.h. A claimed node asks its
  * server for the published firmware VO_FIRST_CHECK_MS after boot, then every

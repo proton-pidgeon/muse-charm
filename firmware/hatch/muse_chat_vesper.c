@@ -182,6 +182,8 @@ static char s_node_id[VP_NODE_ID_MAX + 1];
 /* The claim flow (task 11), on this task. s_claimed mirrors s_claim.state for other tasks. */
 static vc_claim_t s_claim;
 static atomic_bool s_claimed;
+/* An announcement is being said (task 20: the wake word doesn't listen to Muse's own voice). */
+static atomic_bool s_ann_saying;
 static int64_t s_claim_shown_us;     /* when the claim caption was last put up */
 static char s_claim_caption[48];
 
@@ -442,6 +444,7 @@ static void turn_finish(void)
             ESP_LOGI(TAG, "announcements: %d not started yet; kept for the next idle moment", s_ann.n);
         }
         s_turn.announce = false;
+        atomic_store(&s_ann_saying, false);
         s_sink = s_out;
         xStreamBufferReset(s_ann_out);
         muse_state_set_level(0);
@@ -1696,6 +1699,7 @@ static void announce_start(void)
     s_turn.cur = s_turn.tts_msg = -1;
     s_turn.stream_done = true;
     s_turn.announce = true;
+    atomic_store(&s_ann_saying, true);
     xStreamBufferReset(s_ann_out);
     s_sink = s_ann_out;
     s_ann_played = 0;
@@ -2073,6 +2077,11 @@ int vesper_node_status_json(char *out, size_t cap)
                         ? esp_app_get_description()->version
                         : "unknown",
                     s_ota_status);
+}
+
+bool vesper_node_announcing(void)
+{
+    return atomic_load(&s_ann_saying);
 }
 
 void vesper_node_set_updater(vesper_updater_t updater)
