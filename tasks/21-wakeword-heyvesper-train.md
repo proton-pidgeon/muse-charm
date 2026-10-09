@@ -9,24 +9,24 @@ Train a custom on-device wake-word model for "Hey Vesper" using microWakeWord (T
 - Task 20 ("Computer" via WakeNet) is the live bootstrap; this task runs after it (one task per host).
 
 ## Steps
-1. Set up the training environment on the Studio: microWakeWord repo + TensorFlow + Piper TTS with multiple voices.
-2. Generate synthetic training set for "Hey Vesper":
+- [x] 1. Set up the training environment on the Studio: microWakeWord repo + TensorFlow + Piper TTS with multiple voices.
+- [x] 2. Generate synthetic training set for "Hey Vesper":
    - Multiple Piper voices, varied pitch/speed.
    - Negative samples: similar-sounding phrases ("hey whisper", "a vesper", background speech), plus noise/reverb augmentation.
    - Document the dataset composition (counts per class).
-3. Train the microWakeWord model targeting ~50KB (quantized int8 TFLite Micro).
-4. Evaluate against quality bars (define these explicitly before training):
+- [x] 3. Train the microWakeWord model targeting ~50KB (quantized int8 TFLite Micro).
+- [x] 4. Evaluate against quality bars (define these explicitly before training): (iterated: 19 runs; B1 + B3 pass, B2 fails)
    - False-reject rate on held-out "Hey Vesper" samples (target: <5%).
    - False-accept rate on negatives + background audio (target: <1 false alarm per hour of background).
    - Model size ≤ 64KB.
    - If bars aren't met, iterate on data (more voices, harder negatives) — document what was tried.
-5. Export the final .tflite + a short integration note (input format: sample rate, window size, how the firmware feeds it) to `firmware/wakeword/hey-vesper.tflite` (or the path task 20's implementer designates).
-6. Do NOT swap it into the firmware in this task — that swap is a separate step after Kevin hears the quality numbers. Record the model + metrics in HANDOVER.md.
+- [x] 5. Export the final .tflite + a short integration note (input format: sample rate, window size, how the firmware feeds it) to `firmware/wakeword/hey-vesper.tflite` (or the path task 20's implementer designates).
+- [ ] 6. Do NOT swap it into the firmware in this task — that swap is a separate step after Kevin hears the quality numbers. Record the model + metrics in HANDOVER.md.
 
 ## Done when
-- `hey-vesper.tflite` exported with documented quality metrics meeting the bars.
-- Training reproducible: dataset recipe + training command recorded in the repo.
-- HANDOVER.md updated; board issue closed with dotted Summary.
+- [ ] `hey-vesper.tflite` exported with documented quality metrics meeting the bars. (NOT met: B2 fails, 1.55 FA/h on test; see firmware/wakeword/README.md)
+- [x] Training reproducible: dataset recipe + training command recorded in the repo.
+- [ ] HANDOVER.md updated; board issue closed with dotted Summary.
 
 ## Constraints
 - Studio only. No cloud services, no real voice recordings — synthetic only.

@@ -13,6 +13,7 @@ tracked here, and `firmware/apply-sdk.sh` turns a pristine checkout into the Ves
 | `hatch/VERSION` | The firmware version (`MAJOR.MINOR.PATCH`) the build stamps into the image (task 13); bump it for every release |
 | `hatch/test/` | Host tests of the protocol core, the claim flow, the speech helpers, the update check, the announcement parser/scheduler and the wake word's decisions, the log-hygiene check, and the live-turn, live-claim and live-ota harnesses |
 | `avatar/` | The Vesper "Iconic" cyborg-face avatar (task 14; it replaced task 04's owl, now retired) |
+| `wakeword/` | Task 21's "Hey Vesper" microWakeWord model, its metrics, quality bars and training recipe. It is not wired into the build, and it doesn't meet its FA bar yet (see `wakeword/README.md`) |
 | `Makefile` | `make -C firmware test`, `live-turn`, `live-claim` and `live-ota` (host only, no ESP-IDF) |
 
 ## Decision (task 09): a patch set tracked in THIS repo, not an SDK fork

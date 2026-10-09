@@ -1,0 +1,934 @@
+{
+  "task": 21,
+  "status": "FAILS bar B2 (FA/h); B1 and B3 pass",
+  "model": {
+    "file": "hey-vesper.tflite",
+    "bytes": 60840,
+    "sha256": "d2855efe203e7f54412452fe3d5b90023c97b1b637671e844f896d3f13c595b5",
+    "input": {
+      "shape": [
+        1,
+        3,
+        40
+      ],
+      "dtype": "int8",
+      "scale": 0.10196078568696976,
+      "zero_point": -128
+    },
+    "output": {
+      "shape": [
+        1,
+        1
+      ],
+      "dtype": "uint8",
+      "scale": 0.00390625,
+      "zero_point": 0
+    }
+  },
+  "arena_estimate_bytes": 30842,
+  "shipped_run": "it8 (seed 21), chosen by the validation-only rule in quality-bars.md (lowest val FRR)",
+  "operating_point": {
+    "cutoff": 0.8,
+    "window": 3,
+    "rule": "per W: smallest cutoff with val FA/h <= 0.5; pick W with lowest val FRR (tie: larger W)"
+  },
+  "bars": {
+    "frr_max": 0.05,
+    "faph_max": 1.0,
+    "bytes_max": 65536
+  },
+  "passes": {
+    "B1_frr": true,
+    "B2_faph": false,
+    "B3_bytes": true,
+    "all": false
+  },
+  "test": {
+    "n_pos": 3000,
+    "frr_clean": 0.022,
+    "frr_noisy": 0.0383,
+    "frr_hard": 0.102,
+    "frr_noisy_by_source": {
+      "lt": {
+        "n": 1500,
+        "frr": 0.0093
+      },
+      "onnx": {
+        "n": 1500,
+        "frr": 0.0673
+      }
+    },
+    "fa_per_hour": 1.5461,
+    "false_accepts": 21,
+    "background_hours": 13.583,
+    "per_source": {
+      "dipco": {
+        "false_accepts": 11,
+        "hours": 5.335,
+        "fa_per_hour": 2.062
+      },
+      "audioset_eval_00": {
+        "false_accepts": 2,
+        "hours": 1.376,
+        "fa_per_hour": 1.4539
+      },
+      "audioset_eval_01": {
+        "false_accepts": 1,
+        "hours": 1.372,
+        "fa_per_hour": 0.7286
+      },
+      "audioset_eval_02": {
+        "false_accepts": 2,
+        "hours": 1.38,
+        "fa_per_hour": 1.4488
+      },
+      "audioset_eval_03": {
+        "false_accepts": 2,
+        "hours": 1.37,
+        "fa_per_hour": 1.46
+      },
+      "audioset_eval_04": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_05": {
+        "false_accepts": 3,
+        "hours": 1.376,
+        "fa_per_hour": 2.18
+      }
+    },
+    "hardneg_trigger_rate": 0.1196,
+    "hardneg_per_phrase": {
+      "hey whisper": {
+        "triggers": 7,
+        "n": 80,
+        "rate": 0.0875
+      },
+      "a vesper": {
+        "triggers": 8,
+        "n": 80,
+        "rate": 0.1
+      },
+      "vespers": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "Vespa": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "best for": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey vest": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Esther": {
+        "triggers": 9,
+        "n": 80,
+        "rate": 0.1125
+      },
+      "Vesper": {
+        "triggers": 8,
+        "n": 80,
+        "rate": 0.1
+      },
+      "hey Vespa": {
+        "triggers": 69,
+        "n": 80,
+        "rate": 0.8625
+      },
+      "hey vespers": {
+        "triggers": 49,
+        "n": 80,
+        "rate": 0.6125
+      },
+      "hey Jasper": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Vesta": {
+        "triggers": 28,
+        "n": 80,
+        "rate": 0.35
+      },
+      "hey Hester": {
+        "triggers": 7,
+        "n": 80,
+        "rate": 0.0875
+      },
+      "hey Lester": {
+        "triggers": 4,
+        "n": 80,
+        "rate": 0.05
+      },
+      "hey Chester": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Webster": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey vessel": {
+        "triggers": 29,
+        "n": 80,
+        "rate": 0.3625
+      },
+      "hey Esper": {
+        "triggers": 19,
+        "n": 80,
+        "rate": 0.2375
+      },
+      "hey whisperer": {
+        "triggers": 10,
+        "n": 80,
+        "rate": 0.125
+      },
+      "hey sister": {
+        "triggers": 12,
+        "n": 80,
+        "rate": 0.15
+      },
+      "hey pepper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey vector": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Victor": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Kesper": {
+        "triggers": 8,
+        "n": 80,
+        "rate": 0.1
+      },
+      "hey Casper": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Pepper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey there": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey, best friend": {
+        "triggers": 41,
+        "n": 80,
+        "rate": 0.5125
+      },
+      "hey west": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "whisper": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "the vesper bells": {
+        "triggers": 5,
+        "n": 80,
+        "rate": 0.0625
+      },
+      "evening vespers": {
+        "triggers": 10,
+        "n": 80,
+        "rate": 0.125
+      },
+      "a Vespa scooter": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "it's the best for you": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey, wait for me": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey, vest pocket": {
+        "triggers": 65,
+        "n": 80,
+        "rate": 0.8125
+      },
+      "they whisper": {
+        "triggers": 12,
+        "n": 80,
+        "rate": 0.15
+      },
+      "a vest for her": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "the vespers service": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey, it's Esther": {
+        "triggers": 3,
+        "n": 80,
+        "rate": 0.0375
+      },
+      "ves": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey ves": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "per": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      }
+    },
+    "general_tts_trigger_rate": 0.015
+  },
+  "validation": {
+    "frr_noisy": 0.0327,
+    "n_pos": 1500,
+    "fa_per_hour": 0.4828,
+    "false_accepts": 6,
+    "background_hours": 12.427,
+    "per_source": {
+      "chime6_dev_eval": {
+        "false_accepts": 6,
+        "hours": 9.67,
+        "fa_per_hour": 0.6204
+      },
+      "audioset_eval_30": {
+        "false_accepts": 0,
+        "hours": 1.38,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_31": {
+        "false_accepts": 0,
+        "hours": 1.377,
+        "fa_per_hour": 0.0
+      }
+    },
+    "hardneg_trigger_rate": 0.1117,
+    "frr_noisy_by_source": {
+      "lt": {
+        "n": 1000,
+        "frr": 0.004
+      },
+      "onnx": {
+        "n": 500,
+        "frr": 0.09
+      }
+    }
+  },
+  "selection_curves": {
+    "3": {
+      "cutoff": 0.8,
+      "val_faph": 0.4828,
+      "val_frr": 0.0327
+    },
+    "5": {
+      "cutoff": 0.78,
+      "val_faph": 0.4828,
+      "val_frr": 0.0467
+    },
+    "7": {
+      "cutoff": 0.76,
+      "val_faph": 0.4023,
+      "val_frr": 0.0887
+    },
+    "10": {
+      "cutoff": 0.7,
+      "val_faph": 0.4828,
+      "val_frr": 0.218
+    }
+  },
+  "test_curve_at_window": [
+    {
+      "cutoff": 0.5,
+      "frr_noisy": 0.0143,
+      "fa_per_hour": 7.5094
+    },
+    {
+      "cutoff": 0.55,
+      "frr_noisy": 0.0163,
+      "fa_per_hour": 6.1842
+    },
+    {
+      "cutoff": 0.6,
+      "frr_noisy": 0.02,
+      "fa_per_hour": 4.6382
+    },
+    {
+      "cutoff": 0.65,
+      "frr_noisy": 0.0237,
+      "fa_per_hour": 3.902
+    },
+    {
+      "cutoff": 0.7,
+      "frr_noisy": 0.028,
+      "fa_per_hour": 2.7976
+    },
+    {
+      "cutoff": 0.75,
+      "frr_noisy": 0.0293,
+      "fa_per_hour": 2.3559
+    },
+    {
+      "cutoff": 0.8,
+      "frr_noisy": 0.0383,
+      "fa_per_hour": 1.5461
+    },
+    {
+      "cutoff": 0.85,
+      "frr_noisy": 0.054,
+      "fa_per_hour": 1.1043
+    },
+    {
+      "cutoff": 0.9,
+      "frr_noisy": 0.0733,
+      "fa_per_hour": 0.8835
+    },
+    {
+      "cutoff": 0.95,
+      "frr_noisy": 0.1223,
+      "fa_per_hour": 0.2209
+    },
+    {
+      "cutoff": 0.97,
+      "frr_noisy": 0.1683,
+      "fa_per_hour": 0.0736
+    },
+    {
+      "cutoff": 0.98,
+      "frr_noisy": 0.2187,
+      "fa_per_hour": 0.0
+    },
+    {
+      "cutoff": 0.99,
+      "frr_noisy": 0.2807,
+      "fa_per_hour": 0.0
+    }
+  ],
+  "decision_rule": {
+    "frontend": "TFLM micro_speech: 16 kHz, 30 ms window, 10 ms step, 40 channels",
+    "stride_frames": 3,
+    "inference_period_ms": 30,
+    "detect": "sum(last W uint8 outputs) > round(cutoff*255) * W",
+    "cooldown_inferences": 25,
+    "ignore_first_inferences": 25
+  },
+  "dataset": {
+    "tts_clips": {
+      "pos": {
+        "train": {
+          "lt": 40000,
+          "onnx": 15000,
+          "xl": 14275,
+          "xl2": 14759,
+          "lh": 15000
+        },
+        "val": {
+          "lt": 1000,
+          "onnx": 500
+        },
+        "test": {
+          "lt": 1500,
+          "onnx": 1500
+        }
+      },
+      "hardneg": {
+        "train": {
+          "lt": 17600,
+          "onnx": 6600,
+          "xl": 4232,
+          "xl2": 4259,
+          "lh": 4400
+        },
+        "val": {
+          "lt": 1100,
+          "onnx": 440
+        },
+        "test": {
+          "lt": 1760,
+          "onnx": 1760
+        }
+      },
+      "general": {
+        "train": {
+          "lt": 3000,
+          "onnx": 1500,
+          "xl": 771,
+          "xl2": 829,
+          "lh": 1000
+        },
+        "val": {
+          "lt": 150,
+          "onnx": 50
+        },
+        "test": {
+          "lt": 300,
+          "onnx": 300
+        }
+      }
+    },
+    "precomputed_negatives_hours": {
+      "dinner_party/training/chime6_train_u01_ch1_mmap": {
+        "hours": 40.49,
+        "spectrograms": 29154
+      },
+      "no_speech/training/fma_medium_mmap": {
+        "hours": 173.47,
+        "spectrograms": 124900
+      },
+      "no_speech/training/fsd50k_no_speech_mmap": {
+        "hours": 102.5,
+        "spectrograms": 73797
+      },
+      "no_speech/training/fsd50k_speech_mmap": {
+        "hours": 11.75,
+        "spectrograms": 8460
+      },
+      "no_speech/training/wham_train_mmap": {
+        "hours": 43.45,
+        "spectrograms": 31284
+      },
+      "speech/training/voices_lav_far_training_mmap": {
+        "hours": 162.28,
+        "spectrograms": 116845
+      },
+      "audioset_bal_train_03-37 + train noise pool (ours)": {
+        "hours": 51.63,
+        "clips": 18393
+      }
+    },
+    "spectrograms": {
+      "positives/training/hey_vesper_mmap": 198068,
+      "positives/validation/hey_vesper_mmap": 1500,
+      "hardneg/training/hardneg_mmap": 74182,
+      "hardneg/training/general_mmap": 14200,
+      "hardneg/validation/hardneg_mmap": 1540,
+      "hardneg/validation/general_mmap": 200
+    }
+  },
+  "iterations": [
+    {
+      "run": "it1",
+      "config": "train/iterations/it1.yaml",
+      "cutoff": 0.83,
+      "window": 3,
+      "val_frr_noisy": 0.034,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0497,
+      "test_frr_clean": 0.036,
+      "test_frr_hard": 0.1033,
+      "test_fa_per_hour": 1.3252,
+      "test_false_accepts": 18,
+      "test_hardneg_trigger_rate": 0.1241,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it2",
+      "config": "train/iterations/it2.yaml",
+      "cutoff": 0.83,
+      "window": 3,
+      "val_frr_noisy": 0.1127,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.134,
+      "test_frr_clean": 0.0827,
+      "test_frr_hard": 0.2303,
+      "test_fa_per_hour": 0.6626,
+      "test_false_accepts": 9,
+      "test_hardneg_trigger_rate": 0.0293,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it3",
+      "config": "train/iterations/it3.yaml",
+      "cutoff": 0.65,
+      "window": 3,
+      "val_frr_noisy": 0.1193,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.125,
+      "test_frr_clean": 0.07,
+      "test_frr_hard": 0.2303,
+      "test_fa_per_hour": 0.8835,
+      "test_false_accepts": 12,
+      "test_hardneg_trigger_rate": 0.0509,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it4",
+      "config": "train/iterations/it4.yaml",
+      "cutoff": 0.87,
+      "window": 3,
+      "val_frr_noisy": 0.066,
+      "val_fa_per_hour": 0.4023,
+      "test_frr_noisy": 0.0763,
+      "test_frr_clean": 0.0527,
+      "test_frr_hard": 0.1373,
+      "test_fa_per_hour": 1.6933,
+      "test_false_accepts": 23,
+      "test_hardneg_trigger_rate": 0.0364,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it5",
+      "config": "train/iterations/it5.yaml",
+      "cutoff": 0.83,
+      "window": 3,
+      "val_frr_noisy": 0.0433,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0557,
+      "test_frr_clean": 0.028,
+      "test_frr_hard": 0.1297,
+      "test_fa_per_hour": 1.1779,
+      "test_false_accepts": 16,
+      "test_hardneg_trigger_rate": 0.0798,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it6a",
+      "config": "train/iterations/it6a.yaml",
+      "cutoff": 0.86,
+      "window": 3,
+      "val_frr_noisy": 0.064,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0653,
+      "test_frr_clean": 0.0387,
+      "test_frr_hard": 0.1353,
+      "test_fa_per_hour": 1.1779,
+      "test_false_accepts": 16,
+      "test_hardneg_trigger_rate": 0.0668,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it6b",
+      "config": "train/iterations/it6b.yaml",
+      "cutoff": 0.87,
+      "window": 3,
+      "val_frr_noisy": 0.0687,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0707,
+      "test_frr_clean": 0.05,
+      "test_frr_hard": 0.1503,
+      "test_fa_per_hour": 0.9571,
+      "test_false_accepts": 13,
+      "test_hardneg_trigger_rate": 0.0401,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it7",
+      "config": "train/iterations/it7.yaml",
+      "cutoff": 0.74,
+      "window": 3,
+      "val_frr_noisy": 0.058,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0563,
+      "test_frr_clean": 0.0377,
+      "test_frr_hard": 0.137,
+      "test_fa_per_hour": 1.2516,
+      "test_false_accepts": 17,
+      "test_hardneg_trigger_rate": 0.0631,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it8",
+      "config": "train/iterations/it8.yaml",
+      "cutoff": 0.8,
+      "window": 3,
+      "val_frr_noisy": 0.0327,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0383,
+      "test_frr_clean": 0.022,
+      "test_frr_hard": 0.102,
+      "test_fa_per_hour": 1.5461,
+      "test_false_accepts": 21,
+      "test_hardneg_trigger_rate": 0.1196,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it9",
+      "config": "train/iterations/it9.yaml",
+      "cutoff": 0.66,
+      "window": 3,
+      "val_frr_noisy": 0.0387,
+      "val_fa_per_hour": 0.4023,
+      "test_frr_noisy": 0.0337,
+      "test_frr_clean": 0.02,
+      "test_frr_hard": 0.0937,
+      "test_fa_per_hour": 1.6933,
+      "test_false_accepts": 23,
+      "test_hardneg_trigger_rate": 0.0852,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it9b",
+      "config": "train/iterations/it9b.yaml",
+      "cutoff": 0.58,
+      "window": 3,
+      "val_frr_noisy": 0.05,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.047,
+      "test_frr_clean": 0.0363,
+      "test_frr_hard": 0.0963,
+      "test_fa_per_hour": 2.0614,
+      "test_false_accepts": 28,
+      "test_hardneg_trigger_rate": 0.1082,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it10",
+      "config": "train/iterations/it10.yaml",
+      "cutoff": 0.82,
+      "window": 3,
+      "val_frr_noisy": 0.0747,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0737,
+      "test_frr_clean": 0.0513,
+      "test_frr_hard": 0.1317,
+      "test_fa_per_hour": 1.9142,
+      "test_false_accepts": 26,
+      "test_hardneg_trigger_rate": 0.0366,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s22",
+      "config": "train/iterations/it11.yaml",
+      "cutoff": 0.85,
+      "window": 3,
+      "val_frr_noisy": 0.052,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0533,
+      "test_frr_clean": 0.026,
+      "test_frr_hard": 0.135,
+      "test_fa_per_hour": 1.3252,
+      "test_false_accepts": 18,
+      "test_hardneg_trigger_rate": 0.0676,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s23",
+      "config": "train/iterations/it11.yaml",
+      "cutoff": 0.81,
+      "window": 3,
+      "val_frr_noisy": 0.0727,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0753,
+      "test_frr_clean": 0.0603,
+      "test_frr_hard": 0.1333,
+      "test_fa_per_hour": 1.6197,
+      "test_false_accepts": 22,
+      "test_hardneg_trigger_rate": 0.0369,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s24",
+      "config": "train/iterations/it11.yaml",
+      "cutoff": 0.94,
+      "window": 3,
+      "val_frr_noisy": 0.056,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0727,
+      "test_frr_clean": 0.038,
+      "test_frr_hard": 0.17,
+      "test_fa_per_hour": 1.1043,
+      "test_false_accepts": 15,
+      "test_hardneg_trigger_rate": 0.1068,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it12s21",
+      "config": "train/iterations/it12.yaml",
+      "cutoff": 0.88,
+      "window": 3,
+      "val_frr_noisy": 0.064,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0693,
+      "test_frr_clean": 0.039,
+      "test_frr_hard": 0.1327,
+      "test_fa_per_hour": 1.4724,
+      "test_false_accepts": 20,
+      "test_hardneg_trigger_rate": 0.0457,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it12s22",
+      "config": "train/iterations/it12.yaml",
+      "cutoff": 0.67,
+      "window": 3,
+      "val_frr_noisy": 0.0353,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0333,
+      "test_frr_clean": 0.0187,
+      "test_frr_hard": 0.0777,
+      "test_fa_per_hour": 1.4724,
+      "test_false_accepts": 20,
+      "test_hardneg_trigger_rate": 0.0827,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it13s21",
+      "config": "train/iterations/it13.yaml",
+      "cutoff": 0.74,
+      "window": 3,
+      "val_frr_noisy": 0.0767,
+      "val_fa_per_hour": 0.4023,
+      "test_frr_noisy": 0.074,
+      "test_frr_clean": 0.054,
+      "test_frr_hard": 0.1327,
+      "test_fa_per_hour": 1.1043,
+      "test_false_accepts": 15,
+      "test_hardneg_trigger_rate": 0.0753,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it13s22",
+      "config": "train/iterations/it13.yaml",
+      "cutoff": 0.9,
+      "window": 3,
+      "val_frr_noisy": 0.0713,
+      "val_fa_per_hour": 0.4828,
+      "test_frr_noisy": 0.0683,
+      "test_frr_clean": 0.0463,
+      "test_frr_hard": 0.1457,
+      "test_fa_per_hour": 1.2516,
+      "test_false_accepts": 17,
+      "test_hardneg_trigger_rate": 0.0415,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    }
+  ],
+  "protocol": "firmware/wakeword/quality-bars.md"
+}
