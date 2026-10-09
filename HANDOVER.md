@@ -374,3 +374,21 @@ Against the documented baselines (loopback mock pipeline 0.66 s median; phone tu
 - Review: GPT-5.5 → Fable blocked 18A (set_kev_location on the shared node; list_clear with only a model-set confirm) and 18B (announcements lost past the node's 5 s wait); fixed on the fable rung, deltas passed.
 - Live stub node: timer + reminder announced with MP3, at-most-once, 429 verified; lists/weather/news/web/calendar/camera answered; refusals held. Fixed live: the node reply had claimed to note "Kev is at Ravens" (store untouched); now says it can't update Kev's location from the speaker.
 - HUMAN GATE: real-board PTT per tool; publish 1.0.2 so the board can speak timers/reminders (needs the board claimed, task 13).
+
+## 2026-10-08 ~18:30 CDT — Task 18 coordinator verification complete
+- Brain (8795) and node backend (8796) both healthy; launchctl shows stale -15 but processes are live.
+- Live-verified via node channel: weather (spoken style), shopping list add, timer set, news headlines, pizza-order refusal.
+- Board issue #16 marked Done on board #11.
+- Remaining: firmware 1.0.2 build + OTA publish for timer/reminder announcements on the board; real-board PTT test by Kevin.
+
+## 2026-10-08 ~18:30 CDT — Task 19 dispatched (firmware 1.0.2 build + OTA publish)
+- Kevin approved full tool-access track; last piece is firmware 1.0.2 so the board can speak timer/reminder announcements.
+- Task file: tasks/19-firmware-102-publish.md. Board: issue #17, board #11 In Progress.
+- Code already merged (f95e635, task 18). Building in sdk-impl-18-fresh via idf.py (board.sh lacks aipi target in this tree).
+- Baseline: 1.0.1 published. Binary target: 2,035,712 B with version string 1.0.2.
+
+## 2026-10-08 ~18:35 CDT — Task 19 DONE (firmware 1.0.2 build + OTA publish)
+- Rebuilt in sdk-impl-18-fresh via idf.py (incremental, green): muse-gadget.bin 2,035,712 B, version string 1.0.2.
+- Published: `vesper-node firmware publish` → 1.0.2, sha256 a563f886..., at 18:29. `firmware status` confirms.
+- Board pickup pending: homelink-c86320 checks manifest at boot / every 6h / `>ota.check` (serial). Last board turn 17:25. Kevin can reboot the board to pull it immediately.
+- Issue #17 closed; board #11 → Done.
