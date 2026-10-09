@@ -1,0 +1,374 @@
+diff --git a/esp32/components/muse/CMakeLists.txt b/esp32/components/muse/CMakeLists.txt
+--- a/esp32/components/muse/CMakeLists.txt
++++ b/esp32/components/muse/CMakeLists.txt
+@@ -69,39 +69,31 @@
+     list(APPEND srcs "vesper/vesper_ota.c")
+     # Vesper (task 18): the idle announcement poll's core (timers, reminders).
+     list(APPEND srcs "vesper/vesper_announce.c")
+-    # Vesper (task 20): the wake word. vesper_wake.c is the pure-C core
+-    # (host-tested), vesper_wakenet.c runs ESP-SR WakeNet on the idle mic
+-    # feed. The one model (CONFIG_VESPER_WAKE_MODEL) is packed with esp-sr's
+-    # own pack_model.py and linked into the app's rodata, 16-byte aligned, so
+-    # an OTA update carries it: no model partition, no USB flash.
++    # Vesper (tasks 20, 22): the wake word, "Hey Vesper". vesper_wake.c and
++    # vesper_mww.c are the pure-C core (host-tested), vesper_wakeword_engine.cc
++    # runs the microfrontend and the microWakeWord model on TFLite Micro, and
++    # vesper_wakeword.c feeds it the idle mic. The model (vesper/hey-vesper.tflite,
++    # installed by apply-sdk.sh) is linked into the app's rodata, 16-byte
++    # aligned, so an OTA update carries it: no model partition, no USB flash.
+     if(CONFIG_VESPER_WAKE AND NOT CMAKE_BUILD_EARLY_EXPANSION)
+-        list(APPEND srcs "vesper/vesper_wake.c" "vesper/vesper_wakenet.c")
+-        idf_component_get_property(sr_dir espressif__esp-sr COMPONENT_DIR)
+-        set(wake_model "${sr_dir}/model/wakenet_model/${CONFIG_VESPER_WAKE_MODEL}")
+-        if(NOT sr_dir OR NOT EXISTS "${wake_model}/_MODEL_INFO_")
+-            message(FATAL_ERROR "Wake word: no esp-sr model ${CONFIG_VESPER_WAKE_MODEL} (${wake_model})")
++        list(APPEND srcs "vesper/vesper_wake.c" "vesper/vesper_mww.c" "vesper/vesper_wakeword_engine.cc"
++                         "vesper/vesper_wakeword.c")
++        set(wake_model "${COMPONENT_DIR}/vesper/hey-vesper.tflite")
++        if(NOT EXISTS "${wake_model}")
++            message(FATAL_ERROR "Wake word: no model ${wake_model} (run muse-charm firmware/apply-sdk.sh)")
+         endif()
+-        set(wake_stage "${CMAKE_CURRENT_BINARY_DIR}/vesper_srmodels")
+-        file(REMOVE_RECURSE "${wake_stage}")
+-        file(COPY "${wake_model}" DESTINATION "${wake_stage}")
+-        idf_build_get_property(python PYTHON)
+-        execute_process(COMMAND "${python}" "${sr_dir}/model/pack_model.py" -m "${wake_stage}" -o srmodels.bin
+-                        RESULT_VARIABLE pack_rc)
+-        if(NOT pack_rc EQUAL 0 OR NOT EXISTS "${wake_stage}/srmodels.bin")
+-            message(FATAL_ERROR "Wake word: packing ${CONFIG_VESPER_WAKE_MODEL} failed")
+-        endif()
+-        file(SIZE "${wake_stage}/srmodels.bin" wake_bytes)
+-        message(STATUS "Wake word: ${CONFIG_VESPER_WAKE_MODEL} packed into the image (${wake_bytes} bytes)")
+-        set(wake_asm "${CMAKE_CURRENT_BINARY_DIR}/vesper_srmodels.S")
++        file(SIZE "${wake_model}" wake_bytes)
++        message(STATUS "Wake word: \"Hey Vesper\" model linked into the image (${wake_bytes} bytes)")
++        set(wake_asm "${CMAKE_CURRENT_BINARY_DIR}/vesper_hv_model.S")
+         file(WRITE "${wake_asm}"
+-            ".section .rodata.vesper_srmodels\n"
++            ".section .rodata.vesper_hv_model\n"
+             ".balign 16\n"
+-            ".global vesper_srmodels_start\n"
+-            "vesper_srmodels_start:\n"
+-            ".incbin \"${wake_stage}/srmodels.bin\"\n"
+-            ".global vesper_srmodels_end\n"
+-            "vesper_srmodels_end:\n")
+-        set_source_files_properties("${wake_asm}" PROPERTIES OBJECT_DEPENDS "${wake_stage}/srmodels.bin")
++            ".global vesper_hv_model_start\n"
++            "vesper_hv_model_start:\n"
++            ".incbin \"${wake_model}\"\n"
++            ".global vesper_hv_model_end\n"
++            "vesper_hv_model_end:\n")
++        set_source_files_properties("${wake_asm}" PROPERTIES OBJECT_DEPENDS "${wake_model}")
+         list(APPEND srcs "${wake_asm}")
+     endif()
+     if(CONFIG_MUSE_BOARD_WAVESHARE_S3_175C OR CONFIG_MUSE_BOARD_WAVESHARE_S3_175)
+@@ -160,3 +152,10 @@
+         "LV_ASSERT_HANDLER_INCLUDE=<stdlib.h>"
+         "LV_ASSERT_HANDLER=abort()\;")
+ endif()
++
++if(CONFIG_VESPER_WAKE)
++    # Vesper (task 22): with USE_ESP32 (as ESPHome builds it) the microfrontend
++    # puts its buffers in PSRAM instead of internal RAM.
++    idf_component_get_property(msf_lib esphome__esp-micro-speech-features COMPONENT_LIB)
++    target_compile_definitions(${msf_lib} PRIVATE USE_ESP32)
++endif()
+diff --git a/esp32/components/muse/Kconfig b/esp32/components/muse/Kconfig
+--- a/esp32/components/muse/Kconfig
++++ b/esp32/components/muse/Kconfig
+@@ -137,25 +137,19 @@
+             console ">hatch.token=<token>" (never echoed).
+ 
+     config VESPER_WAKE
+-        bool "Wake word (ESP-SR WakeNet, on the device only)"
++        bool "Wake word \"Hey Vesper\" (microWakeWord, on the device only)"
+         depends on MUSE_HATCH && MUSE_BOARD_AIPI && SPIRAM
+         default y
+         help
+-            Vesper (task 20): saying the wake word starts a turn as a talk
+-            press does. WakeNet runs on the idle mic feed only, on the
+-            device; no audio leaves it before the wake word, and nothing
+-            reaches the backend until speech follows (see muse-charm
+-            firmware/README.md, "Wake word"). The model is packed into the
+-            app image, so an OTA update delivers it. Needs the espressif/esp-sr
+-            component (components/muse/idf_component.yml, AIPI only).
+-
+-    config VESPER_WAKE_MODEL
+-        string "WakeNet model"
+-        depends on VESPER_WAKE
+-        default "wn9_computer_tts"
+-        help
+-            The esp-sr model directory (model/wakenet_model/<name>) packed
+-            into the image. wn9_computer_tts says "Computer".
++            Vesper (tasks 20, 22): saying "Hey Vesper" starts a turn as a
++            talk press does. The microWakeWord model (muse-charm
++            firmware/wakeword/hey-vesper.tflite) runs on TensorFlow Lite
++            Micro on the idle mic feed only, on the device; no audio leaves
++            it before the wake word, and nothing reaches the backend until
++            speech follows (see muse-charm firmware/README.md, "Wake word").
++            The model is linked into the app image, so an OTA update delivers
++            it. Needs espressif/esp-tflite-micro and esphome/esp-micro-speech-
++            features (components/muse/idf_component.yml, AIPI only).
+ 
+     config VESPER_WAKE_THRESHOLD
+         int "Wake detection threshold (permille)"
+@@ -163,11 +157,33 @@
+         range 500 990
+         default 650
+         help
+-            WakeNet's detection threshold, in thousandths: higher means
+-            fewer false wakes and more missed ones. 650 is Espressif's own
+-            tuning for wn9_computer_tts (0.648/0.650). Adjustable on the
+-            device without a rebuild: serial ">wake.threshold=0.70" (kept
+-            in NVS muse:wake_thr).
++            The model's probability cutoff, in thousandths: a detection is
++            the mean of the last VESPER_WAKE_WINDOW outputs above it. Higher
++            means fewer false wakes and more missed ones. 650 is the operating
++            point task 21 chose on validation data alone (held-out test: 2.93%
++            missed, 0.22 false wakes per hour; fresh holdout 0.31 per hour).
++            Adjustable on the device without a rebuild: serial
++            ">wake.threshold=0.70" (kept in NVS muse:wake_hv_thr).
++
++    config VESPER_WAKE_WINDOW
++        int "Wake detection window (inferences)"
++        depends on VESPER_WAKE
++        range 1 10
++        default 3
++        help
++            How many 30 ms model outputs the threshold is applied to (their
++            mean). 3 is task 21's operating point; the threshold was chosen
++            for it.
++
++    config VESPER_WAKE_ARENA
++        int "Wake word tensor arena (bytes)"
++        depends on VESPER_WAKE
++        range 16384 131072
++        default 32768
++        help
++            TensorFlow Lite Micro's working memory for the model, allocated
++            once at boot in PSRAM. The boot log and >wake report how much of
++            it the model uses ("arena").
+ 
+     config VESPER_WAKE_DEFAULT_ON
+         bool "Wake word on by default"
+diff --git a/esp32/components/muse/idf_component.yml b/esp32/components/muse/idf_component.yml
+--- a/esp32/components/muse/idf_component.yml
++++ b/esp32/components/muse/idf_component.yml
+@@ -26,10 +26,19 @@
+     public: true
+     rules:
+       - if: "$CONFIG{MUSE_BOARD_ID} != \"none\""
+-  # Vesper (task 20): WakeNet for the wake word, on the AIPI only. Only the
+-  # one model named by CONFIG_VESPER_WAKE_MODEL is packed into the image.
+-  espressif/esp-sr:
+-    version: "2.5.5"
++  # Vesper (task 22): the "Hey Vesper" wake word, on the AIPI only: TFLite
++  # Micro (with Espressif's esp-nn kernels) and the TFLM microfrontend that
++  # microWakeWord's training features come from (ESPHome's packaging of it).
++  espressif/esp-tflite-micro:
++    version: "1.4.1"
++    rules:
++      - if: "$CONFIG{MUSE_BOARD_ID} == \"aipi\""
++  espressif/esp-nn:
++    version: "1.4.1"
++    rules:
++      - if: "$CONFIG{MUSE_BOARD_ID} == \"aipi\""
++  esphome/esp-micro-speech-features:
++    version: "1.2.3"
+     rules:
+       - if: "$CONFIG{MUSE_BOARD_ID} == \"aipi\""
+   espressif/esp_lvgl_adapter:
+diff --git a/esp32/components/muse/muse_input.c b/esp32/components/muse/muse_input.c
+--- a/esp32/components/muse/muse_input.c
++++ b/esp32/components/muse/muse_input.c
+@@ -45,7 +45,7 @@
+ #include "muse_voice.h"
+ #if CONFIG_VESPER_WAKE
+ #include "vesper_wake.h"
+-#include "vesper_wakenet.h"
++#include "vesper_wakeword.h"
+ #endif
+ #include "muse_wifi.h"
+ #if CONFIG_MUSE_WATCHER_CAMERA
+@@ -570,11 +570,11 @@
+ }
+ 
+ /*
+- * Vesper (task 20): ">wake" shows the wake word's state, ">wake=on|off"
+- * switches it, ">wake.threshold=0.65" sets WakeNet's detection threshold
+- * (0.50-0.99; out-of-range values are clamped, anything else refused). Both
+- * are kept in NVS (muse:wake_on, muse:wake_thr) and apply from the next
+- * WakeNet chunk, no restart.
++ * Vesper (tasks 20, 22): ">wake" shows the wake word's state, ">wake=on|off"
++ * switches it, ">wake.threshold=0.65" sets the "Hey Vesper" model's
++ * probability cutoff (0.50-0.99; out-of-range values are clamped, anything
++ * else refused). Both are kept in NVS (muse:wake_on, muse:wake_hv_thr) and
++ * apply from the next inference, no restart.
+  */
+ static void wake_command(const char *line)
+ {
+@@ -584,7 +584,7 @@
+     if (!strcmp(line, "wake")) {
+         char *json = heap_caps_malloc(VESPER_WAKE_JSON_MAX, MUSE_BIG_CAPS);
+         if (json) {
+-            vesper_wakenet_status_json(json, VESPER_WAKE_JSON_MAX);
++            vesper_wakeword_status_json(json, VESPER_WAKE_JSON_MAX);
+             printf("@wake %s\n", json);
+             free(json);
+         }
+@@ -593,18 +593,18 @@
+         if (!vw_parse_onoff(line + 5, &on)) {
+             printf("@wake.error expected >wake=on or >wake=off\n");
+         } else {
+-            bool saved = vesper_wakenet_set_on(on);
++            bool saved = vesper_wakeword_set_on(on);
+             printf("@wake %s%s\n", on ? "on" : "off", saved ? "" : " (not saved: NVS write failed)");
+         }
+     } else if (!strncmp(line, "wake.threshold=", 15)) {
+         int permille;
+         vw_parse_t r = vw_parse_threshold(line + 15, &permille);
+         if (r == VW_PARSE_INVALID) {
+-            int now = vesper_wakenet_threshold();
++            int now = vesper_wakeword_threshold();
+             printf("@wake.error expected >wake.threshold=<0.50-0.99>, e.g. 0.65 (now %d.%03d)\n", now / 1000,
+                    now % 1000);
+         } else {
+-            bool saved = vesper_wakenet_set_threshold(permille);
++            bool saved = vesper_wakeword_set_threshold(permille);
+             printf("@wake.threshold %d.%03d%s%s\n", permille / 1000, permille % 1000,
+                    r == VW_PARSE_CLAMPED ? " (clamped to 0.50-0.99)" : "", saved ? "" : " (not saved: NVS write failed)");
+         }
+@@ -640,7 +640,7 @@
+ #if CONFIG_VESPER_WAKE
+             /* Task 20: the wake word's state, settings and counts (never audio). */
+             char *wake = json + cap;
+-            vesper_wakenet_status_json(wake, VESPER_WAKE_JSON_MAX);
++            vesper_wakeword_status_json(wake, VESPER_WAKE_JSON_MAX);
+             printf("@status {\"board\":\"%s\",\"chat\":%s,\"vesper\":%s,\"wake\":%s,\"device\":%s}\n",
+                    muse_board->name, CHAT_OVER_SERIAL, vesper, wake, json);
+ #else
+diff --git a/esp32/components/muse/muse_voice.c b/esp32/components/muse/muse_voice.c
+--- a/esp32/components/muse/muse_voice.c
++++ b/esp32/components/muse/muse_voice.c
+@@ -40,7 +40,7 @@
+ #if CONFIG_VESPER_WAKE
+ #include "muse_chat_vesper.h"
+ #include "vesper_wake.h"
+-#include "vesper_wakenet.h"
++#include "vesper_wakeword.h"
+ #endif
+ 
+ static const char *TAG = "muse_voice";
+@@ -103,9 +103,10 @@
+ 
+ #if CONFIG_VESPER_WAKE
+ /*
+- * Vesper (task 20): the wake word. idle_capture() hands each clean idle chunk
+- * to WakeNet (vesper_wakenet.c) and sets s_woke when it hears the word; the
+- * loop then runs wake_turn(). Nothing else feeds WakeNet, so it can't fire
++ * Vesper (tasks 20, 22): the wake word, "Hey Vesper". idle_capture() hands
++ * each clean idle chunk to the engine (vesper_wakeword.c) and sets s_woke when
++ * it hears the word; the loop then runs wake_turn(). Nothing else feeds the
++ * engine, so it can't fire
+  * during a turn, a reply, Muse's own playback tail (s_settle) or an
+  * announcement (s_wake_quiet).
+  */
+@@ -156,7 +157,7 @@
+     s_settle = SETTLE_CHUNKS;
+ #if CONFIG_VESPER_WAKE
+     s_woke = false;
+-    vesper_wakenet_reset();   /* nothing heard before this counts toward a wake */
++    vesper_wakeword_reset();   /* nothing heard before this counts toward a wake */
+ #endif
+ }
+ 
+@@ -166,7 +167,7 @@
+ {
+     if (vesper_node_announcing()) {
+         if (!s_wake_quiet) {
+-            vesper_wakenet_reset();
++            vesper_wakeword_reset();
+         }
+         s_wake_quiet = SETTLE_CHUNKS;
+         return;
+@@ -175,7 +176,7 @@
+         s_wake_quiet--;
+         return;
+     }
+-    if (vesper_wakenet_feed(pcm, MUSE_AUDIO_CHUNK, muse_audio_dbfs(pcm, MUSE_AUDIO_CHUNK))) {
++    if (vesper_wakeword_feed(pcm, MUSE_AUDIO_CHUNK, muse_audio_dbfs(pcm, MUSE_AUDIO_CHUNK))) {
+         s_woke = true;
+     }
+ }
+@@ -860,7 +861,7 @@
+     vw_config_default(&cfg);
+     cfg.max_chunks = MAX_FRAMES / MUSE_AUDIO_CHUNK;
+     vw_listen_t l;
+-    vw_listen_start(&l, &cfg, vesper_wakenet_floor_db());
++    vw_listen_start(&l, &cfg, vesper_wakeword_floor_db());
+     rec_stats_t st = { 0 };
+     bool heard = false, gave_up = false;
+     char text[96];
+@@ -933,7 +934,7 @@
+     float rms_db = st.frames ? 10.0f * log10f((float)(st.acc / st.frames / (32768.0 * 32768.0)) + 1e-10f) : -100.0f;
+     ESP_LOGI(TAG, "wake: recorded %.2fs (%s): rms %.1f dBFS, peak %.1f dBFS, room floor %.1f dBFS",
+              (double)s_rec_n / MUSE_AUDIO_RATE, v == VW_END_MAX ? "max" : "silence", rms_db < -100.0f ? -100.0f : rms_db,
+-             20.0 * log10((st.peak + 1) / 32768.0), (double)vesper_wakenet_floor_db());
++             20.0 * log10((st.peak + 1) / 32768.0), (double)vesper_wakeword_floor_db());
+     return WAKE_SPOKE;
+ }
+ 
+@@ -951,13 +952,13 @@
+     }
+     muse_wifi_power(MUSE_WIFI_FULL);
+     if (!can_record()) {
+-        vesper_wakenet_count(VESPER_WAKE_NOT_READY);
++        vesper_wakeword_count(VESPER_WAKE_NOT_READY);
+         pre_reset();
+         return false;
+     }
+     if (!s_rec) {
+         go_idle("NO MEMORY TO LISTEN");   /* a wake turn waits for speech in s_rec */
+-        vesper_wakenet_count(VESPER_WAKE_NOT_READY);
++        vesper_wakeword_count(VESPER_WAKE_NOT_READY);
+         pre_reset();
+         return false;
+     }
+@@ -972,10 +973,10 @@
+         if (r == WAKE_QUIET) {
+             ESP_LOGI(TAG, "wake: no speech; back to idle (nothing sent)");
+         }
+-        vesper_wakenet_count(r == WAKE_QUIET ? VESPER_WAKE_NO_SPEECH : VESPER_WAKE_PRESSED);
++        vesper_wakeword_count(r == WAKE_QUIET ? VESPER_WAKE_NO_SPEECH : VESPER_WAKE_PRESSED);
+         return false;
+     }
+-    vesper_wakenet_count(VESPER_WAKE_TURN);
++    vesper_wakeword_count(VESPER_WAKE_TURN);
+     bool pending_down = finish_note();
+     pre_reset();
+     if (!pending_down && muse_state_mode(NULL) != MUSE_MODE_IDLE) {
+@@ -1110,8 +1111,8 @@
+     }
+ #if CONFIG_VESPER_WAKE
+     /* Here, on the caller's internal-RAM stack: it reads NVS. Without it, push to talk as before. */
+-    vesper_wakenet_init();
+-    const uint32_t stack = 12288;   /* WakeNet's detect runs on this task */
++    vesper_wakeword_init();
++    const uint32_t stack = 12288;   /* the wake word's frontend and TFLite Micro run on this task */
+ #else
+     const uint32_t stack = 6144;
+ #endif
+diff --git a/esp32/devices/sdkconfig.muse-aipi b/esp32/devices/sdkconfig.muse-aipi
+--- a/esp32/devices/sdkconfig.muse-aipi
++++ b/esp32/devices/sdkconfig.muse-aipi
+@@ -64,10 +64,3 @@
+ # actually slept, and how long each power lock kept the chip awake.
+ CONFIG_PM_LIGHT_SLEEP_CALLBACKS=y
+ CONFIG_PM_PROFILING=y
+-
+-# Vesper (task 20): the wake word (components/muse Kconfig VESPER_WAKE) uses
+-# ESP-SR WakeNet with one model, wn9_computer_tts ("Computer"), packed into
+-# the app image. Select only that one here; no MultiNet, no AFE models.
+-CONFIG_SR_WN_WN9_COMPUTER_TTS=y
+-CONFIG_SR_MN_CN_NONE=y
+-CONFIG_SR_MN_EN_NONE=y

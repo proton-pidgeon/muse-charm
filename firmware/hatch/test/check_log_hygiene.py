@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Log hygiene for the Vesper firmware (task 11): no secret may reach a log.
 
-Scans every logging call in the Vesper-owned firmware sources (firmware/hatch/*.c|h) and in
+Scans every logging call in the Vesper-owned firmware sources (firmware/hatch/*.c|cc|h) and in
 the lines the SDK patch set adds (firmware/sdk-patches/*.patch), and fails if one passes a
 secret as an argument: the node credential, the claim secret, the node bearer (token), the
 Authorization buffer, a header value, or the claim code (the wire doc keeps it off serial).
@@ -118,7 +118,7 @@ def main(argv: list[str]) -> int:
     scanned = 0
     for root in map(Path, argv[1:]):
         for path in sorted(root.glob("*")):
-            if path.suffix in {".c", ".h"}:
+            if path.suffix in {".c", ".cc", ".h"}:
                 problems += scan(str(path), path.read_text(encoding="utf-8"))
                 scanned += 1
             elif path.suffix == ".patch":

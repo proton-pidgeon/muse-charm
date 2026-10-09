@@ -8,12 +8,15 @@
 #   1. delete the Meta transport (firmware/sdk-patches/delete.txt)
 #   2. apply the patch series (firmware/sdk-patches/*.patch, in order; a tree
 #      that already has the whole series is detected as such)
-#   3. install the Vesper hatch backend (firmware/hatch/*.{c,h}: the backend,
+#   3. install the Vesper hatch backend (firmware/hatch/*.{c,cc,h}: the backend,
 #      the protocol core, the reply-speech helpers, the claim flow, the node
 #      credential store, the BLE host, the update check, the announcement
-#      poll and the wake word; and VERSION, the firmware version the build
-#      stamps into the image) into
-#      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK)
+#      poll and the wake word; VERSION, the firmware version the build stamps
+#      into the image; and the "Hey Vesper" model, firmware/wakeword/
+#      hey-vesper.tflite, which the build links into the image) into
+#      <SDK>/esp32/components/muse/vesper/ (an ignored path in the SDK).
+#      Files an older patch set installed there and this one no longer uses
+#      (task 20's vesper_wakenet.{c,h}) are removed.
 #   4. install the Vesper avatar (firmware/avatar/install.sh)
 #   5. check that esp32/main/voice.c is still byte-identical to b1a3822
 #
@@ -90,10 +93,18 @@ mkdir -p "$dest"
 for f in vesper_proto.c vesper_proto.h vesper_audio.c vesper_audio.h muse_chat_vesper.c muse_chat_vesper.h \
          vesper_claim.c vesper_claim.h vesper_cred.c vesper_cred.h vesper_ble.c vesper_ble.h \
          vesper_ota.c vesper_ota.h vesper_announce.c vesper_announce.h \
-         vesper_wake.c vesper_wake.h vesper_wakenet.c vesper_wakenet.h VERSION; do
-    if ! cmp -s "$here/hatch/$f" "$dest/$f"; then
-        cp "$here/hatch/$f" "$dest/$f"
-        echo "installed: components/muse/vesper/$f"
+         vesper_wake.c vesper_wake.h vesper_mww.c vesper_mww.h vesper_wakeword_engine.cc vesper_wakeword_engine.h \
+         vesper_wakeword.c vesper_wakeword.h VERSION ../wakeword/hey-vesper.tflite; do
+    name="$(basename "$f")"
+    if ! cmp -s "$here/hatch/$f" "$dest/$name"; then
+        cp "$here/hatch/$f" "$dest/$name"
+        echo "installed: components/muse/vesper/$name"
+    fi
+done
+for f in vesper_wakenet.c vesper_wakenet.h; do   # task 20's WakeNet glue, replaced in task 22
+    if [ -e "$dest/$f" ]; then
+        rm -f "$dest/$f"
+        echo "removed: components/muse/vesper/$f"
     fi
 done
 
