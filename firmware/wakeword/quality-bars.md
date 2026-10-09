@@ -98,6 +98,15 @@ history hides nothing. Every iteration is logged in `firmware/wakeword/README.md
 then the validation and test metrics). We never loosen a bar, and we never put test speakers,
 test settings, test RIRs/noise or test background audio into training.
 
+### Choosing which iteration ships (addendum, 2026-10-09, after it8 and before it9 was scored)
+
+The doc above didn't say how to pick among iterations, so this rule fixes it. It uses validation
+only, like everything else here. The shipped model is the iteration with the **lowest
+validation FRR (noisy) at its own validation-chosen operating point**. On a tie, it's the one
+with the lower validation FA/h. The test numbers of every iteration are reported, but they never
+pick the winner. If that model fails a bar on test, the task fails. We don't go and look for an
+iteration that happens to pass on test.
+
 ## Also reported (no bar)
 
 - FA rate on the held-out **hard negatives**, per phrase (fraction of clips that trigger). This
