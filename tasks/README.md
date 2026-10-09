@@ -26,6 +26,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 18 | [Node tool access — Option B](18-node-tool-access.md) | done (vesper-voice 9ecf1d4 + muse-charm f95e635, redeployed; live stub-node timer/reminder announcements, lists, weather, news, web, calendar, camera verified; firmware 1.0.2 built, not published); real-board PTT + 1.0.2 OTA blocked on Kevin (HUMAN GATE) | 07, 08, 10, 13 |
 | 20 | [Wake word "Computer" (ESP-SR WakeNet)](20-wakeword-computer.md) | merged 8b9239c (firmware 1.0.3 built green, 2,691,072 B, model embedded in the app image so OTA-only delivery; host tests + review gate passed); not published — OTA publish + on-device "Computer" / PTT / false-trigger soak blocked on Kevin (HUMAN GATE in task file) | – |
 | 21 | [Train "Hey Vesper" wake word (microWakeWord)](21-wakeword-heyvesper-train.md) | merged ef786b1 (60,840 B int8 model; FRR 2.93%, 0.22 FA/h held-out test, 0.31 FA/h pre-registered fresh 19 h holdout; recipe in `firmware/wakeword/train/`); firmware swap (step 6) blocked on Kevin reviewing the numbers + on-device soak | 20 |
+| 22 | ["Hey Vesper" wake word in firmware (microWakeWord)](22-wakeword-heyvesper-firmware.md) | done: merged d9e627f (firmware 1.0.4, WakeNet removed, 40 KB PSRAM arena); published OTA 05:20 and the board is running 1.0.4 (validated, arena 23,276 of 40,960 B, engine 1,452 B internal); live "Hey Vesper" voice test + issue #20 close blocked on Kevin (HUMAN GATE) | 21 |
 
 Parallel lanes: 04→05 (avatar) is independent of the backend chain 06→07→08.
 
