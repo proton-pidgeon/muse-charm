@@ -71,12 +71,15 @@ int vesper_wakeword_threshold(void);
 
 /* {"state":"on|off|no_model|failed|not_started","model":"hey_vesper","threshold":0.650,"window":3,
  *  "wakes":N,"turns":N,"no_speech":N,"pressed":N,"not_ready":N,"detect_us":{"avg":N,"max":N},
- *  "score_max":0.123,"arena":N,"floor_db":-62.0,"stack_free":N}
+ *  "score_max":0.123,"arena":N,"floor_db":-62.0,"stack_free":N,
+ *  "heap":{"int":N,"int_min":N,"int_largest":N,"psram":N}}
  * for >status: counts and settings only, never audio or text. score_max is the highest sliding-
  * window score (0-1, compare it with the threshold) since the last reset. Integer formatting only
  * (no floating-point printf: it runs on the serial task's small stack). VESPER_WAKE_JSON_MAX is
- * room for the longest. */
-#define VESPER_WAKE_JSON_MAX 384
+ * room for the longest (409 characters with every number at its maximum). "heap" is the free
+ * internal RAM now, its low-water mark since boot (heap_caps_get_minimum_free_size: the figure that
+ * shows whether a turn came close to running internal RAM out), its largest block, and free PSRAM. */
+#define VESPER_WAKE_JSON_MAX 512
 int vesper_wakeword_status_json(char *out, size_t cap);
 
 #ifdef __cplusplus

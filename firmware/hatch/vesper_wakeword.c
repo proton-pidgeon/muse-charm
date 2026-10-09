@@ -114,17 +114,14 @@ bool vesper_wakeword_init(void)
     }
     size_t int0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
     size_t ps0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    /* The arena in PSRAM, as ESPHome's micro_wake_word does: internal RAM is what Wi-Fi, BLE
-     * and the display share. Internal only if there is no PSRAM to be had. */
-    const char *where = "PSRAM";
+    /* The arena in PSRAM only, as ESPHome's micro_wake_word does: internal RAM is what Wi-Fi,
+     * TLS, BLE and the display share, and 1.0.3 died of an internal-RAM wake engine (firmware/
+     * README.md, "Memory budget and the 1.0.3 crash"). No PSRAM for it: no wake word, never a
+     * 32 KB bite out of internal RAM. */
     s_arena = heap_caps_aligned_alloc(16, CONFIG_VESPER_WAKE_ARENA, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_arena) {
-        where = "internal RAM";
-        s_arena = heap_caps_aligned_alloc(16, CONFIG_VESPER_WAKE_ARENA, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    }
-    if (!s_arena) {
         s_state = ST_FAILED;
-        ESP_LOGE(TAG, "wake word off: no memory for a %d B tensor arena (push to talk is unaffected)",
+        ESP_LOGE(TAG, "wake word off: no PSRAM for a %d B tensor arena (push to talk is unaffected)",
                  CONFIG_VESPER_WAKE_ARENA);
         return false;
     }
@@ -160,10 +157,13 @@ bool vesper_wakeword_init(void)
                   "20 ms chunk with an inference: %u us avg / %u us max at boot (%u timed)",
              on ? "on" : "off (>wake=on)", (unsigned)model_len, thr / 1000, thr % 1000, CONFIG_VESPER_WAKE_WINDOW,
              n ? total / n : 0, worst, n);
-    ESP_LOGI(TAG, "wake word memory: arena %u of %d B used (%s); the engine took %d B internal, %d B PSRAM; "
-                  "free now %u B internal (largest %u), %u B PSRAM",
-             (unsigned)vwe_arena_used(), CONFIG_VESPER_WAKE_ARENA, where, (int)(int0 - int1), (int)(ps0 - ps1),
-             (unsigned)int1, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), (unsigned)ps1);
+    ESP_LOGI(TAG, "wake word memory: arena %u of %d B used (PSRAM); the engine took %d B internal, %d B PSRAM; "
+                  "free now %u B internal (largest %u, lowest since boot %u), %u B PSRAM; "
+                  "init stack %u B unused",
+             (unsigned)vwe_arena_used(), CONFIG_VESPER_WAKE_ARENA, (int)(int0 - int1), (int)(ps0 - ps1),
+             (unsigned)int1, (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+             (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)ps1,
+             (unsigned)uxTaskGetStackHighWaterMark(NULL));
     return true;
 }
 
@@ -275,10 +275,14 @@ int vesper_wakeword_status_json(char *out, size_t cap)
     return snprintf(out, cap,
                     "{\"state\":\"%s\",\"model\":\"%s\",\"threshold\":%d.%03d,\"window\":%d,\"wakes\":%u,\"turns\":%u,"
                     "\"no_speech\":%u,\"pressed\":%u,\"not_ready\":%u,\"detect_us\":{\"avg\":%u,\"max\":%u},"
-                    "\"score_max\":%u.%03u,\"arena\":%u,\"floor_db\":%s%d.%d,\"stack_free\":%u}",
+                    "\"score_max\":%u.%03u,\"arena\":%u,\"floor_db\":%s%d.%d,\"stack_free\":%u,"
+                    "\"heap\":{\"int\":%u,\"int_min\":%u,\"int_largest\":%u,\"psram\":%u}}",
                     state_name(), MODEL_NAME, thr / 1000, thr % 1000, CONFIG_VESPER_WAKE_WINDOW, atomic_load(&s_wakes),
                     atomic_load(&s_turns), atomic_load(&s_no_speech), atomic_load(&s_pressed),
                     atomic_load(&s_not_ready), atomic_load(&s_detect_avg_us), atomic_load(&s_detect_max_us),
                     sc / 1000, sc % 1000, (unsigned)vwe_arena_used(), fl < 0 ? "-" : "", fl_abs / 10, fl_abs % 10,
-                    atomic_load(&s_stack_free));
+                    atomic_load(&s_stack_free), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                    (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }
