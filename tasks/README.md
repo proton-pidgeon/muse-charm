@@ -24,6 +24,7 @@ Work top to bottom. Each task links its prerequisite specs and any tasks it depe
 | 16 | [Node conversation memory + voice room assignment](16-node-conversation-memory.md) | done (merged 6ccaf2f, redeployed, live stub-client context + room-assignment verified; Part 4 spec-only with design-gap notes for Kevin); real-board PTT blocked on Kevin (HUMAN GATE) | 06, 07, 08 |
 | 17 | [Node shared long-term memory (Part 4)](17-node-longterm-memory.md) | done (merged 9d6aa3f, redeployed, live "remember this" turn staged a candidate in ~/memory/node-candidates.jsonl, mode 600); Vesper-side review loop is her runtime, not this repo | 07, 08, 16 |
 | 18 | [Node tool access — Option B](18-node-tool-access.md) | done (vesper-voice 9ecf1d4 + muse-charm f95e635, redeployed; live stub-node timer/reminder announcements, lists, weather, news, web, calendar, camera verified; firmware 1.0.2 built, not published); real-board PTT + 1.0.2 OTA blocked on Kevin (HUMAN GATE) | 07, 08, 10, 13 |
+| 20 | [Wake word "Computer" (ESP-SR WakeNet)](20-wakeword-computer.md) | merged 8b9239c (firmware 1.0.3 built green, 2,691,072 B, model embedded in the app image so OTA-only delivery; host tests + review gate passed); not published — OTA publish + on-device "Computer" / PTT / false-trigger soak blocked on Kevin (HUMAN GATE in task file) | – |
 
 Parallel lanes: 04→05 (avatar) is independent of the backend chain 06→07→08.
 
