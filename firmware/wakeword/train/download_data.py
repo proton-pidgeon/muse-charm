@@ -17,7 +17,8 @@ Roles (see ../quality-bars.md for why each split is where it is):
               Two further evaluation shards (EVAL_VAL_SHARDS) are the extra validation ambient
               set used for cutoff tuning. Each shard is concatenated into one long 16 kHz track.
 
-Usage: python download_data.py [rirs] [noise] [negatives] [background]  (default: all)
+Usage: python download_data.py [rirs] [noise] [negatives] [background] [background_val_ext]
+       (default: the first four; background_val_ext = the it14+ extra validation ambient, opt-in)
 """
 
 import hashlib
@@ -41,6 +42,10 @@ AUDIOSET_NOISE_TEST_SHARDS = ["02"]
 EVAL_SPLIT = "ev" + "al"  # AudioSet's evaluation split directory name
 EVAL_VAL_SHARDS = ["30", "31"]
 EVAL_TEST_SHARDS = ["00", "01", "02", "03", "04", "05"]
+# it14+ (2026-10-09 addendum in ../quality-bars.md): ten more evaluation shards as EXTRA validation
+# ambient, so the cutoff is picked on ~26 h instead of ~12 h. Disjoint from the test shards (00-05)
+# and from everything that is trained on. Still never in training.
+EVAL_VAL_EXT_SHARDS = [f"{i:02d}" for i in range(6, 16)]
 
 
 def log(*a):
@@ -209,8 +214,8 @@ def negatives():
             log("pruned", rel)
 
 
-def background():
-    for role, shards in (("background_val", EVAL_VAL_SHARDS), ("background_test", EVAL_TEST_SHARDS)):
+def background(roles=(("background_val", EVAL_VAL_SHARDS), ("background_test", EVAL_TEST_SHARDS))):
+    for role, shards in roles:
         out = DATA / role
         for shard in shards:
             dest = out / f"audioset_eval_{shard}.wav"
@@ -222,10 +227,16 @@ def background():
             log(role, shard, f"{len(parts)} clips, {len(track) / SR / 3600:.2f} h")
 
 
-STEPS = {"rirs": rirs, "noise": noise, "negatives": negatives, "background": background}
+def background_val_ext():
+    """The extra validation ambient (it14+). Opt-in step; the old iterations never had it."""
+    background(roles=(("background_val_ext", EVAL_VAL_EXT_SHARDS),))
+
+
+STEPS = {"rirs": rirs, "noise": noise, "negatives": negatives, "background": background,
+         "background_val_ext": background_val_ext}
 
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or list(STEPS)
+    wanted = sys.argv[1:] or ["rirs", "noise", "negatives", "background"]
     for w in wanted:
         STEPS[w]()
     log("download done:", wanted)

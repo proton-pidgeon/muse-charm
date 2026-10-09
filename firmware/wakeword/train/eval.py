@@ -43,7 +43,7 @@ STEP_S = 0.010              # feature step
 COOLDOWN = 25               # inferences ignored after a detection (and at the start of a track)
 WINDOWS = [3, 5, 7, 10]
 CUTOFFS = [round(0.50 + 0.01 * i, 2) for i in range(50)]  # 0.50 .. 0.99
-VAL_FAPH_TARGET = 0.5       # half of bar B2
+VAL_FAPH_TARGET = 0.5       # half of bar B2; it14+ rule: on the total AND on every source family
 BARS = {"frr_max": 0.05, "faph_max": 1.0, "bytes_max": 65536}
 
 # ambient sources: name -> (split, kind, location)
@@ -52,6 +52,9 @@ AMBIENT = {
         "chime6_dev_eval": ("mmap", DATA / "negative_datasets/dinner_party_eval/validation_ambient/chime6_dev_eval_mmap"),
         "audioset_eval_30": ("wav", DATA / "background_val/audioset_eval_30.wav"),
         "audioset_eval_31": ("wav", DATA / "background_val/audioset_eval_31.wav"),
+        # it14+ (quality-bars.md addendum 2026-10-09 #2): ten more evaluation shards, ~13.7 h
+        **{f"audioset_eval_{s:02d}": ("wav", DATA / f"background_val_ext/audioset_eval_{s:02d}.wav")
+           for s in range(6, 16)},
     },
     "test": {
         "dipco": ("mmap", DATA / "negative_datasets/dinner_party_eval/testing_ambient/dipco_u01_ch1_mmap"),
@@ -266,6 +269,11 @@ def clip_triggers(p, w, cutoff):
     return bool(s.size and s.max() > thr_u8(cutoff) * w)
 
 
+def family(src):
+    """Source family for the per-family validation constraint: 'chime6' or 'audioset'."""
+    return src.split("_")[0]
+
+
 def faph(outputs_by_source, w, cutoff):
     det, hours, per = 0, 0.0, {}
     for src, outs in outputs_by_source.items():
@@ -275,6 +283,25 @@ def faph(outputs_by_source, w, cutoff):
         det += d
         hours += h
     return det / hours, det, hours, per
+
+
+def faph_by_family(per):
+    fam = {}
+    for src, v in per.items():
+        f = fam.setdefault(family(src), {"false_accepts": 0, "hours": 0.0})
+        f["false_accepts"] += v["false_accepts"]
+        f["hours"] += v["hours"]
+    for f in fam.values():
+        f["hours"] = round(f["hours"], 3)
+        f["fa_per_hour"] = round(f["false_accepts"] / f["hours"], 4)
+    return fam
+
+
+def val_ok(per_source):
+    """it14+ operating-point constraint: FA/h <= VAL_FAPH_TARGET on the total AND on each family."""
+    fam = faph_by_family(per_source)
+    total = sum(v["false_accepts"] for v in fam.values()) / sum(v["hours"] for v in fam.values())
+    return total <= VAL_FAPH_TARGET and all(v["fa_per_hour"] <= VAL_FAPH_TARGET for v in fam.values())
 
 
 def frr(outputs, w, cutoff):
@@ -337,19 +364,22 @@ def main():
         best = None
         for w in WINDOWS:
             for c in CUTOFFS:
-                f, _, _, _ = faph(amb_out["val"], w, c)
-                if f <= VAL_FAPH_TARGET:
+                f, _, _, per = faph(amb_out["val"], w, c)
+                if val_ok(per):
                     r = frr(outs["val_pos"], w, c)
                     cand = (r, -w, c)
-                    curves[str(w)] = {"cutoff": c, "val_faph": round(f, 4), "val_frr": round(r, 4)}
+                    curves[str(w)] = {"cutoff": c, "val_faph": round(f, 4), "val_frr": round(r, 4),
+                                      "val_faph_by_family": faph_by_family(per)}
                     if best is None or cand < best:
                         best = cand
                     break
         if best is None:
-            op = {"cutoff": None, "window": None, "rule": "no cutoff <= 0.99 reached val FA/h <= 0.5"}
+            op = {"cutoff": None, "window": None,
+                  "rule": "no cutoff <= 0.99 reached val FA/h <= 0.5 on the total and on every family"}
         else:
             op = {"cutoff": best[2], "window": -best[1],
-                  "rule": "per W: smallest cutoff with val FA/h <= 0.5; pick W with lowest val FRR (tie: larger W)"}
+                  "rule": "per W: smallest cutoff with val FA/h <= 0.5 on the total AND on each source family "
+                          "(chime6, audioset; 2026-10-09 addendum #2); pick W with lowest val FRR (tie: larger W)"}
     log("operating point", op, curves)
 
     result = {"label": a.label, "model": model_info, "operating_point": op, "selection_curves": curves,
@@ -361,6 +391,7 @@ def main():
         result["validation"] = {
             "frr_noisy": round(frr(outs["val_pos"], w, c), 4), "n_pos": len(outs["val_pos"]),
             "fa_per_hour": round(vf, 4), "false_accepts": vd, "background_hours": round(vh, 3), "per_source": vper,
+            "per_family": faph_by_family(vper),
             "hardneg_trigger_rate": round(1 - frr(outs["val_hardneg"], w, c), 4),
         }
         vby = {}
@@ -377,7 +408,7 @@ def main():
             by_src.setdefault(n.split("/")[0], []).append(p)
         test["frr_noisy_by_source"] = {k: {"n": len(v), "frr": round(frr(v, w, c), 4)} for k, v in by_src.items()}
         test.update({"fa_per_hour": round(tf_, 4), "false_accepts": td, "background_hours": round(th, 3),
-                     "per_source": tper})
+                     "per_source": tper, "per_family": faph_by_family(tper)})
         # hard negatives per phrase (held-out speakers, noisy condition)
         import phrases
 
