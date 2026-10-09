@@ -1,0 +1,1589 @@
+{
+  "task": 21,
+  "status": "PASSES B1, B2 and B3 on the held-out test at the validation-chosen operating point",
+  "model": {
+    "file": "hey-vesper.tflite",
+    "bytes": 60840,
+    "sha256": "40b3510d094de7fd2a8848faad09573915ad86b291381317403b09e419b6340d",
+    "input": {
+      "shape": [
+        1,
+        3,
+        40
+      ],
+      "dtype": "int8",
+      "scale": 0.10196078568696976,
+      "zero_point": -128
+    },
+    "output": {
+      "shape": [
+        1,
+        1
+      ],
+      "dtype": "uint8",
+      "scale": 0.00390625,
+      "zero_point": 0
+    }
+  },
+  "arena_estimate_bytes": 30842,
+  "shipped_run": "it14s22 (it14.yaml = it8 data + mined_neg_r1 at weight 6, trained from scratch with WW_SEED=22), chosen by the validation-only rule in quality-bars.md (addendum #2: lowest val FRR at its own amended operating point, over all 26 runs)",
+  "operating_point": {
+    "cutoff": 0.65,
+    "window": 3,
+    "rule": "per W: smallest cutoff with val FA/h <= 0.5 on the total AND on each source family (chime6, audioset; 2026-10-09 addendum #2); pick W with lowest val FRR (tie: larger W)"
+  },
+  "bars": {
+    "frr_max": 0.05,
+    "faph_max": 1.0,
+    "bytes_max": 65536
+  },
+  "passes": {
+    "B1_frr": true,
+    "B2_faph": true,
+    "B3_bytes": true,
+    "all": true
+  },
+  "test": {
+    "n_pos": 3000,
+    "frr_clean": 0.019,
+    "frr_noisy": 0.0293,
+    "frr_hard": 0.09,
+    "frr_noisy_by_source": {
+      "lt": {
+        "n": 1500,
+        "frr": 0.01
+      },
+      "onnx": {
+        "n": 1500,
+        "frr": 0.0487
+      }
+    },
+    "fa_per_hour": 0.2209,
+    "false_accepts": 3,
+    "background_hours": 13.583,
+    "per_source": {
+      "dipco": {
+        "false_accepts": 2,
+        "hours": 5.335,
+        "fa_per_hour": 0.3749
+      },
+      "audioset_eval_00": {
+        "false_accepts": 1,
+        "hours": 1.376,
+        "fa_per_hour": 0.7269
+      },
+      "audioset_eval_01": {
+        "false_accepts": 0,
+        "hours": 1.372,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_02": {
+        "false_accepts": 0,
+        "hours": 1.38,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_03": {
+        "false_accepts": 0,
+        "hours": 1.37,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_04": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_05": {
+        "false_accepts": 0,
+        "hours": 1.376,
+        "fa_per_hour": 0.0
+      }
+    },
+    "per_family": {
+      "dipco": {
+        "false_accepts": 2,
+        "hours": 5.335,
+        "fa_per_hour": 0.3749
+      },
+      "audioset": {
+        "false_accepts": 1,
+        "hours": 8.248,
+        "fa_per_hour": 0.1212
+      }
+    },
+    "hardneg_trigger_rate": 0.1062,
+    "hardneg_per_phrase": {
+      "hey whisper": {
+        "triggers": 7,
+        "n": 80,
+        "rate": 0.0875
+      },
+      "a vesper": {
+        "triggers": 11,
+        "n": 80,
+        "rate": 0.1375
+      },
+      "vespers": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "Vespa": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "best for": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey vest": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Esther": {
+        "triggers": 4,
+        "n": 80,
+        "rate": 0.05
+      },
+      "Vesper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Vespa": {
+        "triggers": 71,
+        "n": 80,
+        "rate": 0.8875
+      },
+      "hey vespers": {
+        "triggers": 56,
+        "n": 80,
+        "rate": 0.7
+      },
+      "hey Jasper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Vesta": {
+        "triggers": 25,
+        "n": 80,
+        "rate": 0.3125
+      },
+      "hey Hester": {
+        "triggers": 8,
+        "n": 80,
+        "rate": 0.1
+      },
+      "hey Lester": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "hey Chester": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Webster": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey vessel": {
+        "triggers": 39,
+        "n": 80,
+        "rate": 0.4875
+      },
+      "hey Esper": {
+        "triggers": 13,
+        "n": 80,
+        "rate": 0.1625
+      },
+      "hey whisperer": {
+        "triggers": 9,
+        "n": 80,
+        "rate": 0.1125
+      },
+      "hey sister": {
+        "triggers": 6,
+        "n": 80,
+        "rate": 0.075
+      },
+      "hey pepper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey vector": {
+        "triggers": 4,
+        "n": 80,
+        "rate": 0.05
+      },
+      "hey Victor": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey Kesper": {
+        "triggers": 8,
+        "n": 80,
+        "rate": 0.1
+      },
+      "hey Casper": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey Pepper": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey there": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey, best friend": {
+        "triggers": 32,
+        "n": 80,
+        "rate": 0.4
+      },
+      "hey west": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "whisper": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "the vesper bells": {
+        "triggers": 3,
+        "n": 80,
+        "rate": 0.0375
+      },
+      "evening vespers": {
+        "triggers": 11,
+        "n": 80,
+        "rate": 0.1375
+      },
+      "a Vespa scooter": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "it's the best for you": {
+        "triggers": 1,
+        "n": 80,
+        "rate": 0.0125
+      },
+      "hey, wait for me": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey, vest pocket": {
+        "triggers": 50,
+        "n": 80,
+        "rate": 0.625
+      },
+      "they whisper": {
+        "triggers": 7,
+        "n": 80,
+        "rate": 0.0875
+      },
+      "a vest for her": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "the vespers service": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey, it's Esther": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "ves": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      },
+      "hey ves": {
+        "triggers": 2,
+        "n": 80,
+        "rate": 0.025
+      },
+      "per": {
+        "triggers": 0,
+        "n": 80,
+        "rate": 0.0
+      }
+    },
+    "general_tts_trigger_rate": 0.0083
+  },
+  "validation": {
+    "frr_noisy": 0.0253,
+    "n_pos": 1500,
+    "fa_per_hour": 0.382,
+    "false_accepts": 10,
+    "background_hours": 26.175,
+    "per_source": {
+      "chime6_dev_eval": {
+        "false_accepts": 3,
+        "hours": 9.67,
+        "fa_per_hour": 0.3102
+      },
+      "audioset_eval_30": {
+        "false_accepts": 1,
+        "hours": 1.38,
+        "fa_per_hour": 0.7247
+      },
+      "audioset_eval_31": {
+        "false_accepts": 0,
+        "hours": 1.377,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_06": {
+        "false_accepts": 0,
+        "hours": 1.372,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_07": {
+        "false_accepts": 2,
+        "hours": 1.37,
+        "fa_per_hour": 1.4601
+      },
+      "audioset_eval_08": {
+        "false_accepts": 1,
+        "hours": 1.378,
+        "fa_per_hour": 0.7256
+      },
+      "audioset_eval_09": {
+        "false_accepts": 1,
+        "hours": 1.377,
+        "fa_per_hour": 0.7262
+      },
+      "audioset_eval_10": {
+        "false_accepts": 0,
+        "hours": 1.378,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_11": {
+        "false_accepts": 2,
+        "hours": 1.376,
+        "fa_per_hour": 1.4532
+      },
+      "audioset_eval_12": {
+        "false_accepts": 0,
+        "hours": 1.373,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_13": {
+        "false_accepts": 0,
+        "hours": 1.377,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_14": {
+        "false_accepts": 0,
+        "hours": 1.368,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_15": {
+        "false_accepts": 0,
+        "hours": 1.378,
+        "fa_per_hour": 0.0
+      }
+    },
+    "per_family": {
+      "chime6": {
+        "false_accepts": 3,
+        "hours": 9.67,
+        "fa_per_hour": 0.3102
+      },
+      "audioset": {
+        "false_accepts": 7,
+        "hours": 16.504,
+        "fa_per_hour": 0.4241
+      }
+    },
+    "hardneg_trigger_rate": 0.0981,
+    "frr_noisy_by_source": {
+      "lt": {
+        "n": 1000,
+        "frr": 0.006
+      },
+      "onnx": {
+        "n": 500,
+        "frr": 0.064
+      }
+    }
+  },
+  "selection_curves": {
+    "3": {
+      "cutoff": 0.65,
+      "val_faph": 0.382,
+      "val_frr": 0.0253,
+      "val_faph_by_family": {
+        "chime6": {
+          "false_accepts": 3,
+          "hours": 9.67,
+          "fa_per_hour": 0.3102
+        },
+        "audioset": {
+          "false_accepts": 7,
+          "hours": 16.504,
+          "fa_per_hour": 0.4241
+        }
+      }
+    },
+    "5": {
+      "cutoff": 0.64,
+      "val_faph": 0.382,
+      "val_frr": 0.0367,
+      "val_faph_by_family": {
+        "chime6": {
+          "false_accepts": 3,
+          "hours": 9.67,
+          "fa_per_hour": 0.3102
+        },
+        "audioset": {
+          "false_accepts": 7,
+          "hours": 16.504,
+          "fa_per_hour": 0.4241
+        }
+      }
+    },
+    "7": {
+      "cutoff": 0.61,
+      "val_faph": 0.4203,
+      "val_frr": 0.0607,
+      "val_faph_by_family": {
+        "chime6": {
+          "false_accepts": 3,
+          "hours": 9.67,
+          "fa_per_hour": 0.3102
+        },
+        "audioset": {
+          "false_accepts": 8,
+          "hours": 16.504,
+          "fa_per_hour": 0.4847
+        }
+      }
+    },
+    "10": {
+      "cutoff": 0.54,
+      "val_faph": 0.4203,
+      "val_frr": 0.11,
+      "val_faph_by_family": {
+        "chime6": {
+          "false_accepts": 3,
+          "hours": 9.67,
+          "fa_per_hour": 0.3102
+        },
+        "audioset": {
+          "false_accepts": 8,
+          "hours": 16.504,
+          "fa_per_hour": 0.4847
+        }
+      }
+    }
+  },
+  "test_curve_at_window": [
+    {
+      "cutoff": 0.5,
+      "frr_noisy": 0.0223,
+      "fa_per_hour": 0.7362
+    },
+    {
+      "cutoff": 0.55,
+      "frr_noisy": 0.0243,
+      "fa_per_hour": 0.5154
+    },
+    {
+      "cutoff": 0.6,
+      "frr_noisy": 0.0263,
+      "fa_per_hour": 0.5154
+    },
+    {
+      "cutoff": 0.65,
+      "frr_noisy": 0.0293,
+      "fa_per_hour": 0.2209
+    },
+    {
+      "cutoff": 0.7,
+      "frr_noisy": 0.037,
+      "fa_per_hour": 0.1472
+    },
+    {
+      "cutoff": 0.75,
+      "frr_noisy": 0.0423,
+      "fa_per_hour": 0.1472
+    },
+    {
+      "cutoff": 0.8,
+      "frr_noisy": 0.0487,
+      "fa_per_hour": 0.1472
+    },
+    {
+      "cutoff": 0.85,
+      "frr_noisy": 0.0647,
+      "fa_per_hour": 0.0736
+    },
+    {
+      "cutoff": 0.9,
+      "frr_noisy": 0.089,
+      "fa_per_hour": 0.0
+    },
+    {
+      "cutoff": 0.95,
+      "frr_noisy": 0.137,
+      "fa_per_hour": 0.0
+    },
+    {
+      "cutoff": 0.97,
+      "frr_noisy": 0.1713,
+      "fa_per_hour": 0.0
+    },
+    {
+      "cutoff": 0.98,
+      "frr_noisy": 0.2063,
+      "fa_per_hour": 0.0
+    },
+    {
+      "cutoff": 0.99,
+      "frr_noisy": 0.2623,
+      "fa_per_hour": 0.0
+    }
+  ],
+  "decision_rule": {
+    "frontend": "TFLM micro_speech: 16 kHz, 30 ms window, 10 ms step, 40 channels",
+    "stride_frames": 3,
+    "inference_period_ms": 30,
+    "detect": "sum(last W uint8 outputs) > round(cutoff*255) * W",
+    "cooldown_inferences": 25,
+    "ignore_first_inferences": 25
+  },
+  "dataset": {
+    "tts_clips": {
+      "pos": {
+        "train": {
+          "lt": 40000,
+          "onnx": 15000,
+          "xl": 14275,
+          "xl2": 14759,
+          "lh": 15000
+        },
+        "val": {
+          "lt": 1000,
+          "onnx": 500
+        },
+        "test": {
+          "lt": 1500,
+          "onnx": 1500
+        }
+      },
+      "hardneg": {
+        "train": {
+          "lt": 17600,
+          "onnx": 6600,
+          "xl": 4232,
+          "xl2": 4259,
+          "lh": 4400
+        },
+        "val": {
+          "lt": 1100,
+          "onnx": 440
+        },
+        "test": {
+          "lt": 1760,
+          "onnx": 1760
+        }
+      },
+      "general": {
+        "train": {
+          "lt": 3000,
+          "onnx": 1500,
+          "xl": 771,
+          "xl2": 829,
+          "lh": 1000
+        },
+        "val": {
+          "lt": 150,
+          "onnx": 50
+        },
+        "test": {
+          "lt": 300,
+          "onnx": 300
+        }
+      }
+    },
+    "precomputed_negatives_hours": {
+      "dinner_party/training/chime6_train_u01_ch1_mmap": {
+        "hours": 40.49,
+        "spectrograms": 29154
+      },
+      "no_speech/training/fma_medium_mmap": {
+        "hours": 173.47,
+        "spectrograms": 124900
+      },
+      "no_speech/training/fsd50k_no_speech_mmap": {
+        "hours": 102.5,
+        "spectrograms": 73797
+      },
+      "no_speech/training/fsd50k_speech_mmap": {
+        "hours": 11.75,
+        "spectrograms": 8460
+      },
+      "no_speech/training/wham_train_mmap": {
+        "hours": 43.45,
+        "spectrograms": 31284
+      },
+      "speech/training/voices_lav_far_training_mmap": {
+        "hours": 162.28,
+        "spectrograms": 116845
+      },
+      "audioset_bal_train_03-37 + train noise pool (ours)": {
+        "hours": 51.63,
+        "clips": 18393
+      }
+    },
+    "spectrograms": {
+      "positives/training/hey_vesper_mmap": 198068,
+      "positives/validation/hey_vesper_mmap": 1500,
+      "hardneg/training/hardneg_mmap": 74182,
+      "hardneg/training/general_mmap": 14200,
+      "hardneg/validation/hardneg_mmap": 1540,
+      "hardneg/validation/general_mmap": 200
+    },
+    "mined_negatives": {
+      "set": "mined_neg_r1 (train/mine_negatives.py)",
+      "windows": 6814,
+      "frames_per_window": 224,
+      "scanned_models": [
+        "it8",
+        "it1",
+        "it5",
+        "it9",
+        "it9b",
+        "it12s22",
+        "it11s22"
+      ],
+      "scan_min_prob": 0.3,
+      "build_min_prob": 0.5,
+      "dedup_frames": 30,
+      "scanned_hours": 534.0,
+      "sources": "VOiCES far 1,547; CHiME-6 train 449; FMA-medium 1,440; FSD50K no-speech 1,195; FSD50K speech 497; WHAM 73; train noise pool 122; AudioSet bal_train 03-37 1,491 (training sets only)"
+    },
+    "validation_ambient_hours": {
+      "chime6_dev_eval": 9.67,
+      "audioset_eval_30": 1.38,
+      "audioset_eval_31": 1.377,
+      "audioset_eval_06": 1.372,
+      "audioset_eval_07": 1.37,
+      "audioset_eval_08": 1.378,
+      "audioset_eval_09": 1.377,
+      "audioset_eval_10": 1.378,
+      "audioset_eval_11": 1.376,
+      "audioset_eval_12": 1.373,
+      "audioset_eval_13": 1.377,
+      "audioset_eval_14": 1.368,
+      "audioset_eval_15": 1.378
+    }
+  },
+  "iterations": [
+    {
+      "run": "it1",
+      "config": "train/iterations/it1.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.88,
+      "window": 3,
+      "val_frr_noisy": 0.0453,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.062,
+      "test_frr_clean": 0.0433,
+      "test_frr_hard": 0.13,
+      "test_fa_per_hour": 0.7362,
+      "test_false_accepts": 10,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.7274
+      },
+      "test_hardneg_trigger_rate": 0.1065,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it2",
+      "config": "train/iterations/it2.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.9,
+      "window": 3,
+      "val_frr_noisy": 0.166,
+      "val_fa_per_hour": 0.3438,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.1857,
+      "test_frr_clean": 0.1257,
+      "test_frr_hard": 0.2973,
+      "test_fa_per_hour": 0.2945,
+      "test_false_accepts": 4,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.1874,
+        "audioset": 0.3637
+      },
+      "test_hardneg_trigger_rate": 0.0205,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it3",
+      "config": "train/iterations/it3.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.68,
+      "window": 3,
+      "val_frr_noisy": 0.126,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.1303,
+      "test_frr_clean": 0.0747,
+      "test_frr_hard": 0.241,
+      "test_fa_per_hour": 0.8098,
+      "test_false_accepts": 11,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 0.9699
+      },
+      "test_hardneg_trigger_rate": 0.0483,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it4",
+      "config": "train/iterations/it4.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.95,
+      "window": 3,
+      "val_frr_noisy": 0.1273,
+      "val_fa_per_hour": 0.2674,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.3635
+      },
+      "test_frr_noisy": 0.1357,
+      "test_frr_clean": 0.0977,
+      "test_frr_hard": 0.2307,
+      "test_fa_per_hour": 0.8098,
+      "test_false_accepts": 11,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.4995,
+        "audioset": 0.3637
+      },
+      "test_hardneg_trigger_rate": 0.0199,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it5",
+      "config": "train/iterations/it5.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.88,
+      "window": 3,
+      "val_frr_noisy": 0.0573,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.4137,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.0757,
+      "test_frr_clean": 0.045,
+      "test_frr_hard": 0.156,
+      "test_fa_per_hour": 0.5154,
+      "test_false_accepts": 7,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.3749,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0662,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it6a",
+      "config": "train/iterations/it6a.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.88,
+      "window": 3,
+      "val_frr_noisy": 0.0727,
+      "val_fa_per_hour": 0.3438,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0737,
+      "test_frr_clean": 0.0433,
+      "test_frr_hard": 0.1527,
+      "test_fa_per_hour": 1.1043,
+      "test_false_accepts": 15,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.9372,
+        "audioset": 1.2124
+      },
+      "test_hardneg_trigger_rate": 0.0597,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it6b",
+      "config": "train/iterations/it6b.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.92,
+      "window": 3,
+      "val_frr_noisy": 0.104,
+      "val_fa_per_hour": 0.3438,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.107,
+      "test_frr_clean": 0.0727,
+      "test_frr_hard": 0.2057,
+      "test_fa_per_hour": 0.589,
+      "test_false_accepts": 8,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.027,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it7",
+      "config": "train/iterations/it7.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.81,
+      "window": 3,
+      "val_frr_noisy": 0.0807,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.4137,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.075,
+      "test_frr_clean": 0.0483,
+      "test_frr_hard": 0.172,
+      "test_fa_per_hour": 0.7362,
+      "test_false_accepts": 10,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.3749,
+        "audioset": 0.9699
+      },
+      "test_hardneg_trigger_rate": 0.0506,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it8",
+      "config": "train/iterations/it8.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.88,
+      "window": 3,
+      "val_frr_noisy": 0.052,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0623,
+      "test_frr_clean": 0.033,
+      "test_frr_hard": 0.15,
+      "test_fa_per_hour": 0.8835,
+      "test_false_accepts": 12,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.1246,
+        "audioset": 0.7274
+      },
+      "test_hardneg_trigger_rate": 0.0878,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it9",
+      "config": "train/iterations/it9.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.78,
+      "window": 3,
+      "val_frr_noisy": 0.0593,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0613,
+      "test_frr_clean": 0.0443,
+      "test_frr_hard": 0.142,
+      "test_fa_per_hour": 0.6626,
+      "test_false_accepts": 9,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0608,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it9b",
+      "config": "train/iterations/it9b.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.75,
+      "window": 3,
+      "val_frr_noisy": 0.0833,
+      "val_fa_per_hour": 0.3438,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.082,
+      "test_frr_clean": 0.06,
+      "test_frr_hard": 0.155,
+      "test_fa_per_hour": 0.8835,
+      "test_false_accepts": 12,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.9699
+      },
+      "test_hardneg_trigger_rate": 0.0719,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it10",
+      "config": "train/iterations/it10.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.91,
+      "window": 3,
+      "val_frr_noisy": 0.1307,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.1297,
+      "test_frr_clean": 0.0883,
+      "test_frr_hard": 0.216,
+      "test_fa_per_hour": 0.589,
+      "test_false_accepts": 8,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.485
+      },
+      "test_hardneg_trigger_rate": 0.0216,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s22",
+      "config": "train/iterations/it11.yaml",
+      "seed": 22,
+      "init_from": null,
+      "cutoff": 0.9,
+      "window": 3,
+      "val_frr_noisy": 0.064,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.071,
+      "test_frr_clean": 0.0343,
+      "test_frr_hard": 0.1697,
+      "test_fa_per_hour": 0.7362,
+      "test_false_accepts": 10,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.7274
+      },
+      "test_hardneg_trigger_rate": 0.0537,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s23",
+      "config": "train/iterations/it11.yaml",
+      "seed": 23,
+      "init_from": null,
+      "cutoff": 0.87,
+      "window": 3,
+      "val_frr_noisy": 0.1027,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.107,
+      "test_frr_clean": 0.08,
+      "test_frr_hard": 0.1767,
+      "test_fa_per_hour": 0.8835,
+      "test_false_accepts": 12,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 1.0912
+      },
+      "test_hardneg_trigger_rate": 0.0278,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it11s24",
+      "config": "train/iterations/it11.yaml",
+      "seed": 24,
+      "init_from": null,
+      "cutoff": 0.95,
+      "window": 3,
+      "val_frr_noisy": 0.064,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.08,
+      "test_frr_clean": 0.041,
+      "test_frr_hard": 0.1857,
+      "test_fa_per_hour": 1.0307,
+      "test_false_accepts": 14,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.9372,
+        "audioset": 1.0912
+      },
+      "test_hardneg_trigger_rate": 0.0977,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it12s21",
+      "config": "train/iterations/it12.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.87,
+      "window": 5,
+      "val_frr_noisy": 0.072,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.073,
+      "test_frr_clean": 0.0433,
+      "test_frr_hard": 0.1433,
+      "test_fa_per_hour": 1.4724,
+      "test_false_accepts": 20,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.3121,
+        "audioset": 1.5761
+      },
+      "test_hardneg_trigger_rate": 0.0384,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it12s22",
+      "config": "train/iterations/it12.yaml",
+      "seed": 22,
+      "init_from": null,
+      "cutoff": 0.85,
+      "window": 3,
+      "val_frr_noisy": 0.0693,
+      "val_fa_per_hour": 0.3438,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0777,
+      "test_frr_clean": 0.0483,
+      "test_frr_hard": 0.16,
+      "test_fa_per_hour": 0.589,
+      "test_false_accepts": 8,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0472,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it13s21",
+      "config": "train/iterations/it13.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.77,
+      "window": 5,
+      "val_frr_noisy": 0.0933,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.093,
+      "test_frr_clean": 0.0703,
+      "test_frr_hard": 0.1673,
+      "test_fa_per_hour": 0.6626,
+      "test_false_accepts": 9,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0574,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it13s22",
+      "config": "train/iterations/it13.yaml",
+      "seed": 22,
+      "init_from": null,
+      "cutoff": 0.92,
+      "window": 3,
+      "val_frr_noisy": 0.0887,
+      "val_fa_per_hour": 0.3056,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.3635
+      },
+      "test_frr_noisy": 0.0847,
+      "test_frr_clean": 0.0553,
+      "test_frr_hard": 0.1627,
+      "test_fa_per_hour": 1.1043,
+      "test_false_accepts": 15,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.4995,
+        "audioset": 0.8487
+      },
+      "test_hardneg_trigger_rate": 0.0338,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it14",
+      "config": "train/iterations/it14.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.5,
+      "window": 3,
+      "val_frr_noisy": 0.0513,
+      "val_fa_per_hour": 0.2292,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.1034,
+        "audioset": 0.303
+      },
+      "test_frr_noisy": 0.0583,
+      "test_frr_clean": 0.054,
+      "test_frr_hard": 0.118,
+      "test_fa_per_hour": 0.5154,
+      "test_false_accepts": 7,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.7498,
+        "audioset": 0.3637
+      },
+      "test_hardneg_trigger_rate": 0.1176,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it14s22",
+      "config": "train/iterations/it14.yaml",
+      "seed": 22,
+      "init_from": null,
+      "cutoff": 0.65,
+      "window": 3,
+      "val_frr_noisy": 0.0253,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.0293,
+      "test_frr_clean": 0.019,
+      "test_frr_hard": 0.09,
+      "test_fa_per_hour": 0.2209,
+      "test_false_accepts": 3,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.3749,
+        "audioset": 0.1212
+      },
+      "test_hardneg_trigger_rate": 0.1062,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": true
+      }
+    },
+    {
+      "run": "it15",
+      "config": "train/iterations/it15.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.67,
+      "window": 7,
+      "val_frr_noisy": 0.0547,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.4137,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.0467,
+      "test_frr_clean": 0.0303,
+      "test_frr_hard": 0.0997,
+      "test_fa_per_hour": 0.9571,
+      "test_false_accepts": 13,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.4995,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0668,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": true
+      }
+    },
+    {
+      "run": "it16",
+      "config": "train/iterations/it16.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.68,
+      "window": 3,
+      "val_frr_noisy": 0.062,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.4137,
+        "audioset": 0.4241
+      },
+      "test_frr_noisy": 0.0627,
+      "test_frr_clean": 0.0393,
+      "test_frr_hard": 0.1177,
+      "test_fa_per_hour": 1.3252,
+      "test_false_accepts": 18,
+      "test_fa_per_hour_by_family": {
+        "dipco": 1.1246,
+        "audioset": 1.4549
+      },
+      "test_hardneg_trigger_rate": 0.0455,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": false,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it17",
+      "config": "train/iterations/it17.yaml",
+      "seed": 21,
+      "init_from": null,
+      "cutoff": 0.8,
+      "window": 3,
+      "val_frr_noisy": 0.0587,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0607,
+      "test_frr_clean": 0.0377,
+      "test_frr_hard": 0.127,
+      "test_fa_per_hour": 0.5154,
+      "test_false_accepts": 7,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 0.485
+      },
+      "test_hardneg_trigger_rate": 0.0597,
+      "passes": {
+        "B1_frr": false,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": false
+      }
+    },
+    {
+      "run": "it18",
+      "config": "train/iterations/it18.yaml",
+      "seed": 21,
+      "init_from": "it8",
+      "cutoff": 0.59,
+      "window": 3,
+      "val_frr_noisy": 0.0347,
+      "val_fa_per_hour": 0.382,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.2068,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0407,
+      "test_frr_clean": 0.023,
+      "test_frr_hard": 0.0853,
+      "test_fa_per_hour": 0.589,
+      "test_false_accepts": 8,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.5623,
+        "audioset": 0.6062
+      },
+      "test_hardneg_trigger_rate": 0.0696,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": true
+      }
+    },
+    {
+      "run": "it19",
+      "config": "train/iterations/it19.yaml",
+      "seed": 21,
+      "init_from": "it8",
+      "cutoff": 0.68,
+      "window": 3,
+      "val_frr_noisy": 0.0387,
+      "val_fa_per_hour": 0.4203,
+      "val_fa_per_hour_by_family": {
+        "chime6": 0.3102,
+        "audioset": 0.4847
+      },
+      "test_frr_noisy": 0.0417,
+      "test_frr_clean": 0.024,
+      "test_frr_hard": 0.0953,
+      "test_fa_per_hour": 0.2209,
+      "test_false_accepts": 3,
+      "test_fa_per_hour_by_family": {
+        "dipco": 0.0,
+        "audioset": 0.3637
+      },
+      "test_hardneg_trigger_rate": 0.0608,
+      "passes": {
+        "B1_frr": true,
+        "B2_faph": true,
+        "B3_bytes": true,
+        "all": true
+      }
+    }
+  ],
+  "iterations_note": "every run re-scored under quality-bars.md addendum #2 (validation ambient ~26 h, per-family FA/h <= 0.5). The numbers under the original rule (it1-it13) are in README.md's first history table.",
+  "protocol": "firmware/wakeword/quality-bars.md",
+  "confirmatory_holdout": {
+    "protocol": "quality-bars.md addendum #3 (pre-registered before download); hey-vesper.tflite sha256 40b3510d..., cutoff 0.65 / window 3, scored once",
+    "source": "AudioSet evaluation shards 16-29 (never used by any run)",
+    "shards": [
+      "16",
+      "17",
+      "18",
+      "19",
+      "20",
+      "21",
+      "22",
+      "23",
+      "24",
+      "25",
+      "26",
+      "27",
+      "28",
+      "29"
+    ],
+    "hours": 19.226,
+    "false_accepts": 6,
+    "fa_per_hour": 0.3121,
+    "poisson95_upper_count": 13.059,
+    "poisson95_upper_fa_per_hour": 0.6793,
+    "pass": true,
+    "per_shard": {
+      "audioset_eval_16": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_17": {
+        "false_accepts": 1,
+        "hours": 1.373,
+        "fa_per_hour": 0.7282
+      },
+      "audioset_eval_18": {
+        "false_accepts": 0,
+        "hours": 1.368,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_19": {
+        "false_accepts": 0,
+        "hours": 1.373,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_20": {
+        "false_accepts": 1,
+        "hours": 1.376,
+        "fa_per_hour": 0.7266
+      },
+      "audioset_eval_21": {
+        "false_accepts": 0,
+        "hours": 1.38,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_22": {
+        "false_accepts": 2,
+        "hours": 1.371,
+        "fa_per_hour": 1.4589
+      },
+      "audioset_eval_23": {
+        "false_accepts": 0,
+        "hours": 1.376,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_24": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_25": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_26": {
+        "false_accepts": 0,
+        "hours": 1.374,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_27": {
+        "false_accepts": 2,
+        "hours": 1.371,
+        "fa_per_hour": 1.4588
+      },
+      "audioset_eval_28": {
+        "false_accepts": 0,
+        "hours": 1.378,
+        "fa_per_hour": 0.0
+      },
+      "audioset_eval_29": {
+        "false_accepts": 0,
+        "hours": 1.364,
+        "fa_per_hour": 0.0
+      }
+    }
+  }
+}

@@ -1,0 +1,76 @@
+# microWakeWord training config for "Hey Vesper" (task 21). Paths use $WW_FEAT / $WW_DATA /
+# $WW_RUNS / $RUN and are expanded by 05_train.sh into $WW_RUNS/$RUN/training_parameters.yaml.
+# Based on upstream notebooks/basic_training_notebook.ipynb; changes are commented.
+
+window_step_ms: 10
+train_dir: $WW_RUNS/$RUN/model
+
+features:
+  - features_dir: $WW_FEAT/positives        # it3: stored once (224 frames), shifted 0-9 frames here; it4: weight 2 -> 4
+    sampling_weight: 4.0
+    penalty_weight: 1.0
+    truth: true
+    truncation_strategy: fixed_right_cutoff
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    type: mmap
+  - features_dir: $WW_FEAT/hardneg          # ours: TTS near-homophones + general TTS speech,
+    sampling_weight: 3.0                     # it2: aligned exactly like the positives (phrase end; it4: 6 -> 3
+    penalty_weight: 1.0                      # 0-9 frames before the window end)
+    truth: false
+    truncation_strategy: fixed_right_cutoff
+    fixed_right_cutoffs: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    type: mmap
+  - features_dir: $WW_FEAT/hardneg          # ... and at random positions
+    sampling_weight: 2.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: random
+    type: mmap
+  - features_dir: $WW_FEAT/audioset_neg     # it2: AudioSet bal_train 00-01,03-12 + FMA-xs (train pool)
+    sampling_weight: 5.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: random
+    type: mmap
+  - features_dir: $WW_DATA/negative_datasets/speech
+    sampling_weight: 10.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: random
+    type: mmap
+  - features_dir: $WW_DATA/negative_datasets/dinner_party
+    sampling_weight: 10.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: random
+    type: mmap
+  - features_dir: $WW_DATA/negative_datasets/no_speech
+    sampling_weight: 5.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: random
+    type: mmap
+  - features_dir: $WW_FEAT/val_ambient      # CHiME-6 dev+eval only (validation_ambient); DipCo is not linked
+    sampling_weight: 0.0
+    penalty_weight: 1.0
+    truth: false
+    truncation_strategy: split
+    type: mmap
+
+training_steps: [20000, 10000]            # it2: + a low-LR second phase
+positive_class_weight: [1, 1]
+negative_class_weight: [20, 20]
+learning_rates: [0.001, 0.0002]
+batch_size: 128
+
+time_mask_max_size: [0, 0]
+time_mask_count: [0, 0]
+freq_mask_max_size: [0, 0]
+freq_mask_count: [0, 0]
+
+eval_step_interval: 500
+clip_duration_ms: 1500
+
+target_minimization: 0.9
+minimization_metric: null
+maximization_metric: average_viable_recall
