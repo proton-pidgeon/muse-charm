@@ -97,7 +97,8 @@ now lives in the app image (see *Wake word*).
 - `board_aipi.c`, `voice_board.c`, `voice_player.c`
 - the LVGL UI (`muse_ui.c`, `muse_settings_ui.c`, `muse_menu.c`)
 - `muse_voice.c`, the AIPI's push-to-talk task, which talks to the new backend through the
-  unchanged `muse_hatch_*` API
+  unchanged `muse_hatch_*` API (until task 20: patch `0007` adds the wake word beside the
+  press path, all of it under `CONFIG_VESPER_WAKE`; the press path itself is unchanged)
 - `muse_wifi`, `identity.c`, `muse_ble.c`
 - `ota.c`'s stock path (`ota_start`, the version gate, the download task) is unchanged; task 13
   adds `ota_start_request` beside it (patch `0005`) rather than writing a second OTA client
