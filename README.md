@@ -12,3 +12,5 @@ interface (avatar, states, captions) can be tried before buying hardware.
   interactive and headless runs.
 - `tasks/` — work items for Claude Code (`/implement`).
 - `HANDOVER.md` — session state.
+
+- The **goodnight protocol** (blinds, lights, Frame) lives in Little Vesper's brain on the Studio, not here: Mini just forwards "goodnight" to `/ask` and speaks the reply (vesper-voice issue #40; tests: `backend/tests/test_goodnight_passthrough.py`).
