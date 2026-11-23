@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -52,7 +53,7 @@ async def test_goodnight_reply_is_spoken_verbatim_and_actions_are_counted(
         "device_id": NODE_ID,
         "channel": "node",
     }
-    assert "actions=2" in caplog.text
+    assert re.search(r"actions=2\b", caplog.text)
     # the spoken text is spoken, so it was sent to TTS exactly as the brain wrote it
     (tts,) = providers.calls["tts"]
     assert GOODNIGHT_REPLY in tts.content.decode()
@@ -71,18 +72,22 @@ async def test_brain_failure_is_the_existing_error_path_with_one_post(
     assert providers.calls["tts"] == []
 
 
-async def test_brain_timeout_is_one_post_and_never_silence(build, providers) -> None:
+@pytest.mark.parametrize(
+    "exc", [httpx.ReadTimeout, httpx.ConnectError, httpx.RemoteProtocolError, httpx.ConnectTimeout]
+)
+async def test_brain_transport_failure_is_one_post_and_never_silence(build, providers, exc) -> None:
     providers.transcript = "goodnight"
 
-    async def slow(request: httpx.Request) -> httpx.Response:
+    async def broken(request: httpx.Request) -> httpx.Response:
         providers.calls["ask"].append(request)
-        raise httpx.ReadTimeout("slow", request=request)
+        raise exc("boom", request=request)
 
-    providers.ask = slow
+    providers.ask = broken
     events = parse_sse((await post_turn(build())).text)
     assert [n for n, _ in events] == ["transcript", "error", "timing", "done"]
     assert dict(events)["error"]["code"] == "ask_failed"
-    assert len(providers.calls["ask"]) == 1
+    assert len(providers.calls["ask"]) == 1  # a reset may follow delivery: never re-ask
+    assert providers.calls["tts"] == []
 
 
 @pytest.mark.parametrize(
@@ -103,7 +108,7 @@ def test_roomcmd_never_claims_goodnight(utterance: str) -> None:
 async def test_goodnight_with_a_room_phrase_still_goes_to_the_brain(build, providers) -> None:
     providers.transcript = "good night, you're in the office"
     events = parse_sse((await post_turn(build())).text)
-    assert "text_delta" in dict(events)
+    assert dict(events)["text_delta"]["text"] == providers.reply
     assert len(providers.calls["ask"]) == 1
 
 
